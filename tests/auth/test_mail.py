@@ -118,7 +118,7 @@ def test_file_database_and_sessions_survive_restart(settings):
         from app.modules.auth.schemas import SignupRequest
 
         service.request_code("driver@example.com", "signup", None, "test")
-        from tests.conftest import latest_code
+        from tests.auth.conftest import latest_code
 
         service.signup(
             SignupRequest(

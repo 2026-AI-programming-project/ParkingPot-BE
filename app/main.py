@@ -7,7 +7,9 @@ from fastapi.responses import JSONResponse
 
 from app.api.router import api_router
 from app.core.config import Settings
+from app.db.database import Database
 from app.modules.auth.service import AuthService
+from app.modules.auth.tables import AUTH_TABLES
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -15,9 +17,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        service = AuthService(settings)
-        service.database.initialize()
-        app.state.auth_service = service
+        database = Database(settings.database_path)
+        database.initialize(AUTH_TABLES)
+        app.state.database = database
+        app.state.auth_service = AuthService(settings, database)
         yield
 
     app = FastAPI(

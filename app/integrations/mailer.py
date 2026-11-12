@@ -5,28 +5,18 @@ from uuid import uuid4
 
 from app.core.config import Settings
 
-PURPOSE_LABELS = {
-    "signup": "회원가입",
-    "email_change": "이메일 변경",
-    "password_change": "비밀번호 변경",
-}
-
 
 class Mailer:
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    def send_code(self, email: str, purpose: str, code: str):
+    def send(self, email: str, subject: str, body: str):
         settings = self.settings
         message = EmailMessage()
         message["From"] = settings.mail_from
         message["To"] = email
-        message["Subject"] = f"[ParkingPot] {PURPOSE_LABELS[purpose]} 인증번호"
-        message.set_content(
-            f"인증번호: {code}\n"
-            f"유효 시간: {settings.code_ttl_seconds}초\n"
-            "요청하지 않았다면 이 메일을 무시해 주세요.\n"
-        )
+        message["Subject"] = subject
+        message.set_content(body)
         if settings.mail_backend == "file":
             settings.mail_outbox_dir.mkdir(parents=True, exist_ok=True)
             path = settings.mail_outbox_dir / f"{uuid4().hex}.eml"

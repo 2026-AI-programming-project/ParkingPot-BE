@@ -7,18 +7,24 @@ from uuid import uuid4
 
 from app.common.errors import failure
 from app.core.config import Settings
-from app.core.security import hash_code, hash_token, password_hasher
 from app.db.database import Database
 from app.integrations.mailer import Mailer
 from app.modules.auth.schemas import ProfileUpdateRequest, SignupRequest, public_user
+from app.modules.auth.security import hash_code, hash_token, password_hasher
 
 logger = logging.getLogger(__name__)
 
+PURPOSE_LABELS = {
+    "signup": "회원가입",
+    "email_change": "이메일 변경",
+    "password_change": "비밀번호 변경",
+}
+
 
 class AuthService:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, database: Database):
         self.settings = settings
-        self.database = Database(settings.database_path)
+        self.database = database
         self.mailer = Mailer(settings)
         self.now = time.time
         # Unknown addresses take the same password verification path as known ones.
@@ -107,7 +113,13 @@ class AuthService:
                 (email, purpose, user_id, digest, now + self.settings.code_ttl_seconds, now),
             )
             try:
-                self.mailer.send_code(email, purpose, code)
+                self.mailer.send(
+                    email,
+                    f"[ParkingPot] {PURPOSE_LABELS[purpose]} 인증번호",
+                    f"인증번호: {code}\n"
+                    f"유효 시간: {self.settings.code_ttl_seconds}초\n"
+                    "요청하지 않았다면 이 메일을 무시해 주세요.\n",
+                )
             except (OSError, smtplib.SMTPException):
                 # Never log SMTP exceptions: a provider may include recipient data or credentials.
                 logger.warning("Verification email delivery failed")

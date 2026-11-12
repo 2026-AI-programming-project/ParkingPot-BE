@@ -212,31 +212,34 @@ SMTP 수신 성공·실패를 로컬에서 검증하지만 실제 메일 서비�
 
 FastAPI 테스트 방식은 [공식 테스트 문서](https://fastapi.tiangolo.com/tutorial/testing/)를 참고했습니다.
 
-
-## Auth 도메인 구조
+## 백엔드 협업 구조
 
 ```text
-ParkingPot/
-├── app/
-│   ├── main.py                 # 앱 생성·공통 미들웨어
-│   ├── modules/auth/
-│   │   ├── router.py           # 회원가입·로그인·마이페이지·탈퇴 API
-│   │   ├── schemas.py          # Auth 입력·응답 모델과 유효성 검사
-│   │   └── service.py          # 회원·인증 업무와 트랜잭션
-│   ├── api/                    # 라우터 등록·로그인 사용자 의존성
-│   ├── core/                   # 환경 설정·비밀번호 해시
-│   ├── db/                     # 회원·세션·인증번호 DB
-│   ├── common/                 # 공통 오류
-│   └── integrations/           # 인증 메일 발송
-├── tests/                      # Auth·SMTP 검증
-├── scripts/                    # 개발 메일 확인·명세 생성
-├── docs/openapi.json
-├── .env.example
-├── pyproject.toml
-└── uv.lock
+app/
+├── main.py             # 앱 시작, 공통 미들웨어, 도메인 테이블 초기화
+├── api/
+│   ├── router.py       # 도메인 라우터를 /api 아래 등록
+│   └── dependencies.py # 공유 의존성 CurrentUser, DatabaseDep
+├── core/config.py      # 환경 설정
+├── db/database.py      # SQLite 연결과 트랜잭션
+├── integrations/      # 공용 메일 발송
+├── common/            # 공통 HTTP 오류
+└── modules/auth/      # 회원가입, 로그인, 마이페이지, 탈퇴
+    ├── router.py      # HTTP 경로
+    ├── schemas.py     # 요청과 응답 모델
+    ├── service.py     # 인증 규칙과 데이터 처리
+    ├── tables.py      # 회원, 세션, 인증번호 테이블
+    ├── dependencies.py # 인증 내부 의존성과 공개 사용자 정보
+    └── security.py    # 비밀번호, 토큰, 인증번호 해시
+tests/auth/            # 인증 API와 메일 테스트
 ```
 
-이 브랜치는 담당한 회원·인증 기능만 포함합니다. 별도 users 도메인이나 주차 기능용
-파일은 없습니다. 마이페이지·탈퇴도 `auth` 도메인에서 처리하며 기존 `/api/users/me`
-경로는 프론트엔드 연동을 위해 유지했습니다. 다른 도메인에서 인증이 필요하면
-`app.api.dependencies.CurrentUser`를 사용하면 됩니다.
+팀원은 `app/modules/<담당기능>/`에 도메인 코드를 두고 `tests/<담당기능>/`에 테스트를 작성합니다.
+새 라우터는 `app/api/router.py`에 등록합니다. 새 테이블이 필요하면 도메인의 `tables.py`에
+정의한 SQL을 `app/main.py`의 `database.initialize(...)`에 추가합니다. 기존 테이블의 구조를
+바꿀 때는 기존 데이터에 적용할 마이그레이션을 별도로 준비해야 합니다.
+
+로그인이 필요한 라우트는 `app.api.dependencies.CurrentUser`로 `id`, `email`, `nickname`을
+받습니다. 다른 도메인에서 계정 소유자를 연결할 때는 `user["id"]`를 사용합니다.
+같은 모듈의 `DatabaseDep`로 앱의 DB 연결을 가져올 수 있습니다. 도메인 내부의 인증 SQL과
+비밀번호 해시는 `auth`에서 관리합니다. 마이페이지 경로는 `/api/users/me`를 사용합니다.

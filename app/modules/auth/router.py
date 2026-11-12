@@ -1,6 +1,12 @@
 from fastapi import APIRouter, Request
 
-from app.api.dependencies import AuthServiceDep, Credentials, CurrentUser, client_ip
+from app.modules.auth.dependencies import (
+    AuthenticatedAccount,
+    AuthServiceDep,
+    Credentials,
+    CurrentUser,
+    client_ip,
+)
 from app.modules.auth.schemas import (
     EmailCodeRequest,
     EmailCodeResponse,
@@ -13,7 +19,6 @@ from app.modules.auth.schemas import (
     SignupRequest,
     SignupResponse,
     UserResponse,
-    public_user,
 )
 
 router = APIRouter()
@@ -72,7 +77,7 @@ def logout(service: AuthServiceDep, credentials: Credentials, user: CurrentUser)
 
 @router.get("/users/me", response_model=UserResponse, tags=["마이페이지"], summary="내 정보 조회")
 def me(user: CurrentUser):
-    return public_user(user)
+    return user
 
 
 @router.post(
@@ -82,7 +87,10 @@ def me(user: CurrentUser):
     summary="현재 비밀번호 확인",
 )
 def verify_password(
-    data: PasswordVerifyRequest, request: Request, service: AuthServiceDep, user: CurrentUser
+    data: PasswordVerifyRequest,
+    request: Request,
+    service: AuthServiceDep,
+    user: AuthenticatedAccount,
 ):
     service.verify_password(user, data.password, client_ip(request))
     return {"message": "비밀번호가 확인되었습니다."}

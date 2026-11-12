@@ -2,8 +2,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from app.core.security import hash_token, password_hasher
-from tests.conftest import PASSWORD, latest_code
+from app.api.dependencies import CurrentUser, DatabaseDep
+from app.modules.auth.security import hash_token, password_hasher
+from tests.auth.conftest import PASSWORD, latest_code
 
 
 def signup_body(code, **changes):
@@ -346,7 +347,7 @@ def test_delivery_failure_rolls_back_new_challenge(client, code, service, settin
     def fail_delivery(*args):
         raise OSError("mail unavailable")
 
-    monkeypatch.setattr(service.mailer, "send_code", fail_delivery)
+    monkeypatch.setattr(service.mailer, "send", fail_delivery)
     assert (
         client.post(
             "/api/auth/email-verifications", json={"email": "driver@example.com"}
@@ -372,3 +373,20 @@ def test_openapi_and_cors(client):
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
     assert client.get("/health").json() == {"status": "ok"}
+
+
+def test_other_domains_can_use_shared_identity_and_database(client, signup, login):
+    user = signup()
+    headers = login()
+
+    @client.app.get("/_test/account", include_in_schema=False)
+    def account(current: CurrentUser, database: DatabaseDep):
+        with database.connect() as connection:
+            row = connection.execute("SELECT id FROM users WHERE id = ?", (current["id"],))
+            assert row.fetchone()["id"] == current["id"]
+        return current
+
+    assert client.get("/_test/account").status_code == 401
+    response = client.get("/_test/account", headers=headers)
+    assert response.status_code == 200
+    assert response.json() == user
