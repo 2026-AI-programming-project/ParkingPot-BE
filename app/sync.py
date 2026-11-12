@@ -3,7 +3,7 @@
 import argparse
 import sys
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from math import ceil
 
 import httpx
@@ -161,16 +161,18 @@ def _normal_name(value: str) -> str:
 
 
 def link_facilities(settings: Settings) -> int:
-    """Link unique matches, preferring a facility that has live status."""
+    """Link unique matches, preferring a facility with recent status."""
     with connect(settings) as connection:
+        cutoff = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
         lots = connection.execute(
             "SELECT id, name, latitude, longitude FROM parking_lots"
         ).fetchall()
         facilities = connection.execute(
             """SELECT f.source_id, f.name, f.latitude, f.longitude,
-                      s.source_id IS NOT NULL AS has_status
+                      (s.fetched_at >= ?) AS has_fresh_status
                FROM realtime_facilities f
-               LEFT JOIN realtime_status s ON s.source_id = f.source_id"""
+               LEFT JOIN realtime_status s ON s.source_id = f.source_id""",
+            (cutoff,),
         )
         by_name = defaultdict(list)
         by_id = {}
@@ -204,7 +206,7 @@ def link_facilities(settings: Settings) -> int:
         }
         linked = 0
         for parking_id, matches in proposals.items():
-            live = [facility for facility in matches if facility["has_status"]]
+            live = [facility for facility in matches if facility["has_fresh_status"]]
             current = existing.get(parking_id)
             if current and any(f["source_id"] == current for f in live):
                 continue
