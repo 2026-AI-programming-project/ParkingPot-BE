@@ -1,2 +1,1 @@
 """ParkingPot backend."""
-

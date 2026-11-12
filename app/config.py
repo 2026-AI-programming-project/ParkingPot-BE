@@ -32,4 +32,3 @@ class Settings:
             realtime_sido_code=os.getenv("PARKING_REALTIME_SIDO_CODE") or None,
             realtime_sigungu_code=os.getenv("PARKING_REALTIME_SIGUNGU_CODE") or None,
         )
-

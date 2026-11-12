@@ -6,9 +6,9 @@ import threading
 import httpx
 
 from app.config import Settings
-from app.db import connect
+from app.parking_db import connect
 from app.sources import SourceError, fetch_page
-from app.sync import _save_page
+from app.sync import _save_page, link_facilities
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,10 @@ class RealtimeRefresher:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.stop_event = threading.Event()
-        self.thread = threading.Thread(target=self._run, name="parking-realtime-refresh", daemon=True)
+        self.linked_status_ids: set[str] | None = None
+        self.thread = threading.Thread(
+            target=self._run, name="parking-realtime-refresh", daemon=True
+        )
 
     def start(self) -> None:
         self.thread.start()
@@ -57,6 +60,16 @@ class RealtimeRefresher:
             try:
                 count = refresh_realtime_once(self.settings, self.stop_event)
                 if not self.stop_event.is_set():
+                    with connect(self.settings) as connection:
+                        status_ids = {
+                            row[0]
+                            for row in connection.execute("SELECT source_id FROM realtime_status")
+                        }
+                    if status_ids != self.linked_status_ids:
+                        updated = link_facilities(self.settings)
+                        self.linked_status_ids = status_ids
+                        if updated:
+                            logger.info("실시간 주차정보 연결 %d건 갱신", updated)
                     logger.info("실시간 주차정보 %d건 갱신", count)
             except SourceError as exc:
                 logger.warning("실시간 주차정보 갱신 실패: %s", exc)

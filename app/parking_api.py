@@ -2,13 +2,13 @@
 
 import hashlib
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
-from app.db import connect
 from app.parking import get_lot, search_lots
+from app.parking_db import connect
 
 router = APIRouter()
 
@@ -31,20 +31,25 @@ def _session_hash(authorization: str | None = Header(default=None)) -> str:
 
 
 def _require_session(connection, token_hash: str) -> None:
-    if connection.execute("SELECT 1 FROM sessions WHERE token_hash = ?", (token_hash,)).fetchone() is None:
+    if (
+        connection.execute("SELECT 1 FROM sessions WHERE token_hash = ?", (token_hash,)).fetchone()
+        is None
+    ):
         raise HTTPException(status_code=401, detail="유효하지 않은 토큰입니다")
-
-
-@router.get("/health")
-def health() -> dict:
-    return {"status": "ok"}
 
 
 @router.get("/health/realtime")
 def realtime_health(request: Request) -> dict:
-    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
     with connect(_settings(request)) as connection:
         latest = connection.execute("SELECT MAX(fetched_at) FROM realtime_status").fetchone()[0]
+        total_lots = connection.execute("SELECT COUNT(*) FROM parking_lots").fetchone()[0]
+        linked_lots = connection.execute("SELECT COUNT(*) FROM realtime_links").fetchone()[0]
+        source_statuses = connection.execute("SELECT COUNT(*) FROM realtime_status").fetchone()[0]
+        source_statuses_with_facility = connection.execute(
+            """SELECT COUNT(*) FROM realtime_status s
+               JOIN realtime_facilities f ON f.source_id = s.source_id"""
+        ).fetchone()[0]
         fresh_linked = connection.execute(
             """SELECT COUNT(*) FROM realtime_status s
                JOIN realtime_links l ON l.source_id = s.source_id
@@ -53,6 +58,10 @@ def realtime_health(request: Request) -> dict:
         ).fetchone()[0]
     return {
         "last_fetched_at": latest,
+        "total_lots": total_lots,
+        "linked_lots": linked_lots,
+        "source_statuses": source_statuses,
+        "source_statuses_with_facility": source_statuses_with_facility,
         "fresh_linked_lots": fresh_linked,
         "refresh_interval_seconds": _settings(request).realtime_refresh_seconds,
     }
@@ -65,7 +74,7 @@ def create_anonymous_session(request: Request) -> dict:
     with connect(_settings(request)) as connection:
         connection.execute(
             "INSERT INTO sessions(token_hash, created_at) VALUES (?, ?)",
-            (token_hash, datetime.now(timezone.utc).isoformat()),
+            (token_hash, datetime.now(UTC).isoformat()),
         )
     return {"access_token": token, "token_type": "bearer"}
 
@@ -132,7 +141,9 @@ def list_favorites(request: Request, token_hash: str = Depends(_session_hash)) -
 
 
 @router.put("/favorites/{parking_id}")
-def add_favorite(parking_id: str, request: Request, token_hash: str = Depends(_session_hash)) -> dict:
+def add_favorite(
+    parking_id: str, request: Request, token_hash: str = Depends(_session_hash)
+) -> dict:
     with connect(_settings(request)) as connection:
         _require_session(connection, token_hash)
         if get_lot(connection, parking_id) is None:
@@ -145,7 +156,9 @@ def add_favorite(parking_id: str, request: Request, token_hash: str = Depends(_s
 
 
 @router.delete("/favorites/{parking_id}")
-def remove_favorite(parking_id: str, request: Request, token_hash: str = Depends(_session_hash)) -> dict:
+def remove_favorite(
+    parking_id: str, request: Request, token_hash: str = Depends(_session_hash)
+) -> dict:
     with connect(_settings(request)) as connection:
         _require_session(connection, token_hash)
         connection.execute(
@@ -173,4 +186,3 @@ def rate_parking_lot(
         )
         rating = get_lot(connection, parking_id)["rating"]
     return rating
-

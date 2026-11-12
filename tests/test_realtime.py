@@ -4,8 +4,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
-from app.db import connect, init_db
 from app.main import create_app
+from app.parking_db import connect, init_db
 from app.realtime import refresh_realtime_once
 from app.sources import SourceError
 from app.sync import _save_page, link_facilities
@@ -34,9 +34,12 @@ def test_failed_refresh_keeps_previous_snapshot(tmp_path, monkeypatch):
     with pytest.raises(SourceError, match="second page failed"):
         refresh_realtime_once(settings)
     with connect(settings) as connection:
-        assert connection.execute(
-            "SELECT available_spaces FROM realtime_status WHERE source_id = 'RT-A'"
-        ).fetchone()[0] == 2
+        assert (
+            connection.execute(
+                "SELECT available_spaces FROM realtime_status WHERE source_id = 'RT-A'"
+            ).fetchone()[0]
+            == 2
+        )
 
 
 def test_successful_refresh_saves_all_pages(tmp_path, monkeypatch):
@@ -71,16 +74,37 @@ def test_server_refreshes_live_data_on_startup(tmp_path, monkeypatch):
     )
     init_db(settings)
     with connect(settings) as connection:
-        _save_page(connection, "catalog", [{
-            "prkplceNo": "A", "prkplceNm": "시청 주차장",
-            "latitude": "37.5", "longitude": "127.0",
-        }])
-        _save_page(connection, "facility", [{
-            "prk_center_id": "RT-A", "prk_plce_nm": "시청 주차장",
-            "prk_plce_entrc_la": "37.5", "prk_plce_entrc_lo": "127.0",
-        }])
-    link_facilities(settings)
+        _save_page(
+            connection,
+            "catalog",
+            [
+                {
+                    "prkplceNo": "A",
+                    "prkplceNm": "시청 주차장",
+                    "latitude": "37.5",
+                    "longitude": "127.0",
+                }
+            ],
+        )
+        _save_page(
+            connection,
+            "facility",
+            [
+                {
+                    "prk_center_id": "RT-A",
+                    "prk_plce_nm": "시청 주차장",
+                    "prk_plce_entrc_la": "37.5",
+                    "prk_plce_entrc_lo": "127.0",
+                }
+            ],
+        )
     refreshed = threading.Event()
+    linked = threading.Event()
+
+    def track_link(config):
+        result = link_facilities(config)
+        linked.set()
+        return result
 
     def fake_refresh(config, stop):
         with connect(config) as connection:
@@ -89,12 +113,18 @@ def test_server_refreshes_live_data_on_startup(tmp_path, monkeypatch):
         return 1
 
     monkeypatch.setattr("app.realtime.refresh_realtime_once", fake_refresh)
-    with TestClient(create_app(settings)) as client:
+    monkeypatch.setattr("app.realtime.link_facilities", track_link)
+    with TestClient(create_app(parking_settings=settings)) as client:
         assert refreshed.wait(timeout=3)
+        assert linked.wait(timeout=3)
         congestion = client.get("/parking-lots/A/congestion").json()
         assert congestion["available_spaces"] == 8
         assert congestion["level"] == "available"
         assert congestion["fetched_at"] is not None
         health = client.get("/health/realtime").json()
         assert health["fresh_linked_lots"] == 1
+        assert health["total_lots"] == 1
+        assert health["linked_lots"] == 1
+        assert health["source_statuses"] == 1
+        assert health["source_statuses_with_facility"] == 1
         assert health["last_fetched_at"] == congestion["fetched_at"]

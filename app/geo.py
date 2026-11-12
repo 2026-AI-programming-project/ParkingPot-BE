@@ -14,4 +14,3 @@ def bounds(lat: float, lon: float, radius_m: int) -> tuple[float, float, float, 
     lat_delta = radius_m / 111_000
     lon_delta = radius_m / max(1.0, 111_000 * cos(radians(lat)))
     return lat - lat_delta, lat + lat_delta, lon - lon_delta, lon + lon_delta
-

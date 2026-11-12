@@ -3,14 +3,14 @@
 import argparse
 import sys
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from math import ceil
 
 import httpx
 
 from app.config import Settings
-from app.db import connect, init_db
 from app.geo import distance_m
+from app.parking_db import connect, init_db
 from app.sources import SourceError, fetch_page
 
 
@@ -90,7 +90,7 @@ def _catalog_row(item: dict) -> tuple | None:
 
 def _save_page(connection, kind: str, items: list[dict]) -> int:
     count = 0
-    fetched_at = datetime.now(timezone.utc).isoformat()
+    fetched_at = datetime.now(UTC).isoformat()
     for item in items:
         if kind == "catalog":
             row = _catalog_row(item)
@@ -135,10 +135,17 @@ def _save_page(connection, kind: str, items: list[dict]) -> int:
             source_id = str(item.get("prk_center_id") or "").strip()
             total = _number(item.get("pkfc_ParkingLots_total"))
             available = _number(item.get("pkfc_Available_ParkingLots_total"))
-            if not source_id or total is None or available is None or total <= 0 or not 0 <= available <= total:
+            if (
+                not source_id
+                or total is None
+                or available is None
+                or total <= 0
+                or not 0 <= available <= total
+            ):
                 continue
             connection.execute(
-                """INSERT INTO realtime_status(source_id, total_spaces, available_spaces, fetched_at)
+                """INSERT INTO realtime_status(
+                    source_id, total_spaces, available_spaces, fetched_at)
                    VALUES (?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET
                    total_spaces=excluded.total_spaces,
                    available_spaces=excluded.available_spaces,
@@ -154,32 +161,67 @@ def _normal_name(value: str) -> str:
 
 
 def link_facilities(settings: Settings) -> int:
-    """Link only unique same-name matches within 250 m, or identical source IDs."""
+    """Link unique matches, preferring a facility that has live status."""
     with connect(settings) as connection:
-        lots = connection.execute("SELECT id, name, latitude, longitude FROM parking_lots").fetchall()
-        facilities = connection.execute("SELECT source_id, name, latitude, longitude FROM realtime_facilities")
+        lots = connection.execute(
+            "SELECT id, name, latitude, longitude FROM parking_lots"
+        ).fetchall()
+        facilities = connection.execute(
+            """SELECT f.source_id, f.name, f.latitude, f.longitude,
+                      s.source_id IS NOT NULL AS has_status
+               FROM realtime_facilities f
+               LEFT JOIN realtime_status s ON s.source_id = f.source_id"""
+        )
         by_name = defaultdict(list)
         by_id = {}
         for lot in lots:
             by_name[_normal_name(lot["name"])].append(lot)
             by_id[lot["id"]] = lot
-        linked = 0
+        proposals = defaultdict(list)
         for facility in facilities:
             candidates = []
             if facility["source_id"] in by_id:
                 candidates = [by_id[facility["source_id"]]]
             elif facility["latitude"] is not None and facility["longitude"] is not None:
                 candidates = [
-                    lot for lot in by_name[_normal_name(facility["name"])]
-                    if lot["latitude"] is not None and lot["longitude"] is not None
-                    and distance_m(lot["latitude"], lot["longitude"], facility["latitude"], facility["longitude"]) <= 250
+                    lot
+                    for lot in by_name[_normal_name(facility["name"])]
+                    if lot["latitude"] is not None
+                    and lot["longitude"] is not None
+                    and distance_m(
+                        lot["latitude"],
+                        lot["longitude"],
+                        facility["latitude"],
+                        facility["longitude"],
+                    )
+                    <= 250
                 ]
             if len(candidates) == 1:
+                proposals[candidates[0]["id"]].append(facility)
+        existing = {
+            row["parking_id"]: row["source_id"]
+            for row in connection.execute("SELECT parking_id, source_id FROM realtime_links")
+        }
+        linked = 0
+        for parking_id, matches in proposals.items():
+            live = [facility for facility in matches if facility["has_status"]]
+            current = existing.get(parking_id)
+            if current and any(f["source_id"] == current for f in live):
+                continue
+            selected = live[0] if len(live) == 1 else matches[0] if len(matches) == 1 else None
+            if selected is None or selected["source_id"] == current:
+                continue
+            if current:
+                cursor = connection.execute(
+                    "UPDATE OR IGNORE realtime_links SET source_id = ? WHERE parking_id = ?",
+                    (selected["source_id"], parking_id),
+                )
+            else:
                 cursor = connection.execute(
                     "INSERT OR IGNORE INTO realtime_links(parking_id, source_id) VALUES (?, ?)",
-                    (candidates[0]["id"], facility["source_id"]),
+                    (parking_id, selected["source_id"]),
                 )
-                linked += cursor.rowcount
+            linked += cursor.rowcount
     return linked
 
 
@@ -204,7 +246,8 @@ def sync(
                         (kind, scope, page_size),
                     )
                 cursor = connection.execute(
-                    "SELECT next_page FROM sync_progress WHERE kind = ? AND scope = ? AND page_size = ?",
+                    "SELECT next_page FROM sync_progress "
+                    "WHERE kind = ? AND scope = ? AND page_size = ?",
                     (kind, scope, page_size),
                 ).fetchone()
                 page = cursor["next_page"] if cursor else 1
@@ -212,15 +255,21 @@ def sync(
             pages_fetched = 0
             while max_pages is None or pages_fetched < max_pages:
                 items, total = fetch_page(
-                    client, settings, kind, page, page_size,
-                    sido_code=sido_code, sigungu_code=sigungu_code,
+                    client,
+                    settings,
+                    kind,
+                    page,
+                    page_size,
+                    sido_code=sido_code,
+                    sigungu_code=sigungu_code,
                 )
                 finished = not items or page * page_size >= total
                 with connect(settings) as connection:
                     imported += _save_page(connection, kind, items)
                     if finished:
                         connection.execute(
-                            "DELETE FROM sync_progress WHERE kind = ? AND scope = ? AND page_size = ?",
+                            "DELETE FROM sync_progress "
+                            "WHERE kind = ? AND scope = ? AND page_size = ?",
                             (kind, scope, page_size),
                         )
                     else:
@@ -232,12 +281,16 @@ def sync(
                         )
                 pages_fetched += 1
                 if pages_fetched == 1 or pages_fetched % 10 == 0 or finished:
-                    print(f"{kind}: {page}페이지 / 약 {ceil(total / page_size)}페이지, 이번 실행 {imported}건 저장", flush=True)
+                    print(
+                        f"{kind}: {page}페이지 / 약 {ceil(total / page_size)}페이지, "
+                        f"이번 실행 {imported}건 저장",
+                        flush=True,
+                    )
                 if finished:
                     break
                 page += 1
             counts[kind] = imported
-            if kind == "facility":
+            if kind in {"catalog", "facility", "realtime"}:
                 counts["new_links"] = link_facilities(settings)
     with connect(settings) as connection:
         counts["linked_realtime_statuses"] = connection.execute(
@@ -251,10 +304,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="공공데이터 주차장 정보 동기화")
     parser.add_argument("--kind", choices=["all", "catalog", "facility", "realtime"], default="all")
     parser.add_argument("--page-size", type=int, default=1000)
-    parser.add_argument("--max-pages", type=int, help="이번 실행에서 소스별로 가져올 최대 페이지 수")
+    parser.add_argument(
+        "--max-pages", type=int, help="이번 실행에서 소스별로 가져올 최대 페이지 수"
+    )
     parser.add_argument("--sido-code", help="시설·실시간정보 조회 지역 (예: 서울 11)")
     parser.add_argument("--sigungu-code", help="시설·실시간정보 조회 시군구 코드")
-    parser.add_argument("--allow-nationwide-facility", action="store_true", help="시간이 오래 걸릴 수 있는 전국 시설정보 조회 허용")
+    parser.add_argument(
+        "--allow-nationwide-facility",
+        action="store_true",
+        help="시간이 오래 걸릴 수 있는 전국 시설정보 조회 허용",
+    )
     parser.add_argument("--restart", action="store_true", help="저장된 다음 페이지 위치를 초기화")
     args = parser.parse_args()
     if not 1 <= args.page_size <= 1000 or (args.max_pages is not None and args.max_pages < 1):
@@ -262,23 +321,40 @@ def main() -> None:
     if args.sido_code and (len(args.sido_code) != 2 or not args.sido_code.isdigit()):
         parser.error("sido-code는 숫자 2자리여야 합니다")
     if args.sigungu_code and (
-        not args.sido_code or len(args.sigungu_code) != 5
-        or not args.sigungu_code.isdigit() or not args.sigungu_code.startswith(args.sido_code)
+        not args.sido_code
+        or len(args.sigungu_code) != 5
+        or not args.sigungu_code.isdigit()
+        or not args.sigungu_code.startswith(args.sido_code)
     ):
         parser.error("sigungu-code는 sido-code로 시작하는 숫자 5자리여야 합니다")
     kinds = ["catalog", "facility", "realtime"] if args.kind == "all" else [args.kind]
     if "facility" in kinds and not args.sido_code:
         if not args.allow_nationwide_facility:
-            parser.error("전국 시설정보는 약 170만 건이며 깊은 페이지에서 시간 초과가 발생할 수 있습니다. --sido-code와 --sigungu-code를 지정하세요. 전국 조회를 계속하려면 --allow-nationwide-facility를 추가하세요")
-        print("전국 시설정보 약 170만 건을 조회합니다. 긴 지연과 시간 초과가 발생할 수 있습니다.", file=sys.stderr)
+            parser.error(
+                "전국 시설정보는 약 170만 건이며 깊은 페이지에서 시간 초과가 발생할 수 있습니다. "
+                "--sido-code와 --sigungu-code를 지정하세요. 전국 조회를 계속하려면 "
+                "--allow-nationwide-facility를 추가하세요"
+            )
+        print(
+            "전국 시설정보 약 170만 건을 조회합니다. 긴 지연과 시간 초과가 발생할 수 있습니다.",
+            file=sys.stderr,
+        )
     try:
-        print(sync(
-            Settings.from_env(), kinds, args.page_size, args.max_pages,
-            args.sido_code, args.sigungu_code, args.restart,
-        ))
+        print(
+            sync(
+                Settings.from_env(),
+                kinds,
+                args.page_size,
+                args.max_pages,
+                args.sido_code,
+                args.sigungu_code,
+                args.restart,
+            )
+        )
     except SourceError as exc:
         hint = (
-            "전국 시설정보 요청이 지연되고 있습니다. 지역코드를 지정해 다시 실행하세요. 기존 이어받기 위치는 보존됩니다."
+            "전국 시설정보 요청이 지연되고 있습니다. 지역코드를 지정해 다시 실행하세요. "
+            "기존 이어받기 위치는 보존됩니다."
             if "facility" in str(exc) and not args.sido_code
             else "같은 명령을 다시 실행하면 실패한 페이지부터 이어집니다."
         )
@@ -287,4 +363,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

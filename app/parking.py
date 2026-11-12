@@ -1,6 +1,6 @@
 """Parking lot search and response formatting."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from app.geo import bounds, distance_m
 
@@ -25,7 +25,7 @@ def _congestion(row) -> dict:
     if fetched_at is None:
         return result
     try:
-        age = datetime.now(timezone.utc) - datetime.fromisoformat(fetched_at)
+        age = datetime.now(UTC) - datetime.fromisoformat(fetched_at)
     except ValueError:
         return result
     if age > timedelta(minutes=10) or age < -timedelta(minutes=1):
@@ -33,7 +33,13 @@ def _congestion(row) -> dict:
     if total is None or available is None or total <= 0 or not 0 <= available <= total:
         return result
     ratio = available / total
-    level, color = ("available", "green") if ratio >= 0.5 else ("moderate", "yellow") if ratio >= 0.2 else ("busy", "red")
+    level, color = (
+        ("available", "green")
+        if ratio >= 0.5
+        else ("moderate", "yellow")
+        if ratio >= 0.2
+        else ("busy", "red")
+    )
     result.update(
         level=level,
         color=color,
@@ -136,9 +142,21 @@ def search_lots(
         ]
         located = [(row, distance) for row, distance in located if distance <= radius_m]
         if sort == "price":
-            located.sort(key=lambda item: (item[0]["hourly_price"] is None, item[0]["hourly_price"] or 0, item[1]))
+            located.sort(
+                key=lambda item: (
+                    item[0]["hourly_price"] is None,
+                    item[0]["hourly_price"] or 0,
+                    item[1],
+                )
+            )
         elif sort == "rating":
-            located.sort(key=lambda item: (item[0]["rating_average"] is None, -(item[0]["rating_average"] or 0), item[1]))
+            located.sort(
+                key=lambda item: (
+                    item[0]["rating_average"] is None,
+                    -(item[0]["rating_average"] or 0),
+                    item[1],
+                )
+            )
         elif sort == "name":
             located.sort(key=lambda item: (item[0]["name"], item[0]["id"]))
         else:
@@ -148,7 +166,9 @@ def search_lots(
         page_rows = located[(page - 1) * page_size : page * page_size]
         items = [serialize_lot(row, distance) for row, distance in page_rows]
     else:
-        total = connection.execute("SELECT COUNT(*) FROM parking_lots p" + where, params).fetchone()[0]
+        total = connection.execute(
+            "SELECT COUNT(*) FROM parking_lots p" + where, params
+        ).fetchone()[0]
         order = {
             "name": "p.name, p.id",
             "price": "p.hourly_price IS NULL, p.hourly_price, p.id",
@@ -162,10 +182,15 @@ def search_lots(
         nearest_id = None
     for item in items:
         item["is_nearest"] = item["id"] == nearest_id if nearest_id else False
-    return {"items": items, "total": total, "page": page, "page_size": page_size, "nearest_id": nearest_id}
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "nearest_id": nearest_id,
+    }
 
 
 def get_lot(connection, parking_id: str) -> dict | None:
     row = connection.execute(SELECT_LOTS + " WHERE p.id = ?", (parking_id,)).fetchone()
     return serialize_lot(row) if row else None
-

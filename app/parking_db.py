@@ -6,7 +6,6 @@ from contextlib import contextmanager
 
 from app.config import Settings
 
-
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS parking_lots (
     id TEXT PRIMARY KEY,
@@ -90,4 +89,3 @@ def connect(settings: Settings) -> Iterator[sqlite3.Connection]:
 def init_db(settings: Settings) -> None:
     with connect(settings) as connection:
         connection.executescript(SCHEMA)
-

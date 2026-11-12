@@ -1,61 +1,252 @@
-# ParkingPot Backend
+# ParkingPot-BE
 
-FastAPI로 만든 주차장 검색·주변 조회·상세·혼잡도·즐겨찾기 API입니다.
+회원가입과 주차장 검색·혼잡도·즐겨찾기를 제공하는 FastAPI + SQLite 프로젝트입니다.
+주차장 API의 사용법과 데이터 동기화 방법은 [주차장 안내](docs/parking.md)에 있습니다.
 
-## 시작하기
+## 실행 (Windows PowerShell)
 
 Python 3.11 이상이 필요합니다.
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m venv .venv
-.venv\Scripts\python -m pip install -e ".[test]"
+uv sync --extra dev --locked
 Copy-Item .env.example .env
+uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-`.env`의 `PARKING_CATALOG_SERVICE_KEY`에는 [전국주차장정보표준데이터](https://www.data.go.kr/data/15012896/standard.do) 키를, `PARKING_STATUS_SERVICE_KEY`에는 [한국교통안전공단 주차정보 제공 API](https://www.data.go.kr/data/15099883/openapi.do) 키를 넣습니다. 두 값 모두 발급받은 **디코딩 인증키**를 사용합니다. 두 번째 키는 시설정보와 실시간정보 조회에 함께 쓰입니다. `.env`는 Git에 포함되지 않습니다. 각 API의 활용신청이 필요합니다.
+이미 `.env`가 있다면 복사 단계를 생략하세요.
+`uv` 대신 일반 Python 가상환경을 사용해도 됩니다.
 
 ```powershell
-.venv\Scripts\python -m app.sync --kind all --sido-code 11 --sigungu-code 11110
-.venv\Scripts\python -m uvicorn app.main:app --reload
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
 ```
 
-위 예시의 `11`은 서울 시도코드, `11110`은 종로구 시군구코드입니다. 다른 지역이면 두 코드를 바꾸세요. 기본 주차장 정보는 전국에서 가져오고, 시설·실시간정보는 지정한 지역만 가져옵니다. 실제 API 응답 기준으로 전국 시설정보는 1,706,731건, 서울 전체는 238,045건, 종로구는 5,429건입니다. 시군구 단위로 시작하면 훨씬 빠릅니다.
+- API 실행 후 [Swagger UI](http://127.0.0.1:8000/docs)에서 요청을 직접 실행할 수 있습니다.
+- [상태 확인](http://127.0.0.1:8000/health), [실행 중 OpenAPI](http://127.0.0.1:8000/openapi.json)
+- 회원용 SQLite 파일 `data/parkingpot.sqlite3`과 주차장용 `parking.db`는 첫 실행 때 자동으로 생성됩니다. 기존 `parking.db`의 동기화 데이터는 유지됩니다.
+- 로컬 기본 설정은 실제 이메일을 보내지 않습니다. `data/outbox/*.eml`에 메일을 저장합니다.
+  `uv run python -m scripts.read_mail`로 가장 최근 인증번호를 확인하세요.
 
-API 문서는 `http://127.0.0.1:8000/docs`에서 볼 수 있습니다. 처음 실행할 때는 동기화가 끝날 때까지 주차장 목록이 비어 있습니다. 공공 API 호출을 시험할 때는 `.venv\Scripts\python -m app.sync --kind all --sido-code 11 --sigungu-code 11110 --max-pages 1`로 소스별 한 페이지만 가져올 수 있습니다. 이후 같은 명령을 다시 실행하면 저장된 다음 페이지부터 이어받습니다. 처음부터 갱신하려면 `--restart`를 사용하세요. 기본 페이지 크기는 1000건이며 `--page-size`로 조절할 수 있습니다.
+## 구현한 API
 
-전국 시설정보는 약 170만 건이며 실제 조회에서 깊은 페이지가 반복 시간 초과됐습니다. 그래서 시설정보를 포함한 명령에는 지역코드가 필요합니다. 기본정보를 이미 가져왔다면 `.venv\Scripts\python -m app.sync --kind facility --sido-code 11 --sigungu-code 11110` 다음에 `.venv\Scripts\python -m app.sync --kind realtime --sido-code 11 --sigungu-code 11110`을 실행하세요. 다른 지역은 코드를 바꾸면 됩니다. 전국 시설정보를 꼭 시도하려면 `--allow-nationwide-facility`를 명시해야 하며 시간 초과 가능성이 있습니다. 기존 전국 조회의 이어받기 위치는 지역별 조회와 별도로 보존됩니다. 운영 시에는 기본정보를 정기적으로, 실시간 정보는 별도 주기로 갱신해야 합니다. 실시간 응답은 가져온 지 10분이 지나면 `unknown`으로 표시됩니다.
+주차장 검색은 `GET /parking-lots`, 상세 조회는 `GET /parking-lots/{id}`입니다. 주차장 즐겨찾기와 별점은 현재 별도의 익명 세션(`POST /sessions/anonymous`)을 사용합니다. 회원 로그인 토큰과 익명 주차장 토큰은 서로 호환되지 않습니다. 전체 경로와 응답 형식은 [주차장 안내](docs/parking.md)를 참고하세요.
 
-## API
+| 메서드 | 경로 | 기능 | 인증 |
+| --- | --- | --- | --- |
+| POST | `/api/auth/email-verifications` | 인증번호 요청 | 회원가입은 불필요, 정보 변경은 필요 |
+| POST | `/api/auth/signup` | 회원가입 | 불필요 |
+| POST | `/api/auth/login` | 로그인·세션 발급 | 불필요 |
+| POST | `/api/auth/logout` | 현재 세션 로그아웃 | 필요 |
+| GET | `/api/users/me` | 내 이메일·닉네임 조회 | 필요 |
+| POST | `/api/users/me/password/verify` | 입력한 현재 비밀번호 확인 | 필요 |
+| PATCH | `/api/users/me` | 이메일·닉네임·비밀번호 수정 | 필요 |
+| DELETE | `/api/users/me` | 회원탈퇴 | 필요 |
 
-| 기능                | 경로                                           | 주요 입력·출력                                                                                |
-| ------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| 검색·주변 조회·필터 | `GET /parking-lots`                            | `name`, `address`, `lat`, `lon`, `radius_m`, `fee`, `accessible`, `sort`, `page`, `page_size` |
-| 상세                | `GET /parking-lots/{id}`                       | 요금, 1시간 예상 요금, 운영시간, 키워드, 별점, 혼잡도                                         |
-| 혼잡도              | `GET /parking-lots/{id}/congestion`            | 잔여면수 비율, 색상, 조회 시각                                                                |
-| 익명 세션 발급      | `POST /sessions/anonymous`                     | 즐겨찾기·별점용 Bearer 토큰                                                                   |
-| 즐겨찾기            | `GET /favorites`, `PUT/DELETE /favorites/{id}` | 세션별 주차장 목록·등록·해제                                                                  |
-| 별점                | `PUT /parking-lots/{id}/rating`                | `{"score": 1~5}`; 같은 세션은 기존 별점을 변경                                                |
+인증은 로그인 응답의 `access_token`을 `Authorization: Bearer <access_token>` 헤더에
+넣는 방식입니다. Swagger UI의 **Authorize**에도 토큰 문자열만 입력하면 됩니다.
+토큰은 JWT가 아닌 서버 저장형 임의 세션 토큰이며 기본 유효 시간은 7일입니다.
 
-예: `GET /parking-lots?name=시청&lat=37.5665&lon=126.9780&radius_m=3000&fee=free&accessible=true&sort=distance`
+## 회원가입 → 로그인 → 조회
 
-`fee`는 `free`, `paid`, `mixed` 중 하나입니다. `free`와 `paid` 필터에는 각각 `mixed` 주차장도 포함됩니다. `sort`는 `name`, `price`, `rating`, `distance`를 지원합니다. `distance`에는 `lat`와 `lon`이 필요합니다. 좌표가 있으면 기본 정렬은 거리순입니다. 목록 응답의 `nearest_id`, 각 항목의 `distance_m`·`is_nearest`를 지도 강조에 활용할 수 있습니다. 목적지 주소는 `address`로 검색하거나, 지도 서비스에서 주소를 좌표로 변환한 뒤 `lat`·`lon`으로 주변 조회할 수 있습니다. 지도 렌더링과 사용자 위치 취득은 프론트엔드 역할입니다.
+1. 인증번호 요청: `POST /api/auth/email-verifications`
 
-`hourly_price`는 기본시간·기본요금·추가단위시간·추가단위요금으로 계산한 **첫 60분 예상 요금**입니다. 데이터가 불충분하거나 혼합 요금이면 `null`입니다. 실제 할인·일일요금 등은 `fee_description`과 다를 수 있습니다. 별점은 이 서비스 사용자가 등록한 평가 평균이며, 평가 전에는 `average: null`입니다.
+```json
+{"email": "driver@example.com", "purpose": "signup"}
+```
 
-혼잡도는 `available_spaces / total_spaces` 기준입니다. `50%` 이상은 `green`/`available`, `20%` 이상 `50%` 미만은 `yellow`/`moderate`, `20%` 미만은 `red`/`busy`입니다. 실시간 정보가 없거나 10분 넘게 갱신되지 않으면 `gray`/`unknown`입니다. `fetched_at`은 원천 데이터의 측정 시각이 아니라 **우리 서버가 가져온 시각**입니다.
+응답은 202입니다. 인증번호는 이메일로만 전달하며 API 응답에는 포함하지 않습니다.
+로컬 개발에서는 위의 메일 확인 명령으로 인증번호를 읽습니다.
 
-즐겨찾기와 별점 요청에는 `Authorization: Bearer <access_token>`이 필요합니다. 토큰은 `POST /sessions/anonymous`에서 발급하며, 잃어버리면 해당 익명 사용자의 즐겨찾기를 복구할 수 없습니다. 계정 로그인과 기기 간 동기화는 아직 지원하지 않습니다.
+2. 회원가입: `POST /api/auth/signup`
 
-## 데이터 연결
+```json
+{
+  "nickname": "주차왕",
+  "email": "driver@example.com",
+  "verification_code": "123456",
+  "password": "ParkingPot!123",
+  "password_confirm": "ParkingPot!123"
+}
+```
 
-- 전국주차장정보표준데이터의 `prkplceNo`를 주차장 ID로 사용합니다. 이름·주소·좌표·요금·운영시간·장애인 전용 주차구역 여부를 저장합니다.
-- 한국교통안전공단 API의 시설정보와 실시간정보는 `prk_center_id`로 연결합니다. 전국 표준데이터와는 ID가 달라, 동일 ID이거나 **같은 이름 + 250m 이내의 유일한 후보**인 경우에만 연결합니다. 연결되지 않은 주차장은 혼잡도를 `unknown`으로 표시합니다. 동기화 결과의 `new_links`는 이전에 저장된 시설정보까지 포함한 새 연결 수이며, `linked_realtime_statuses`는 현재 DB에서 기본정보와 연결된 실시간정보 수입니다.
-- 실시간 잔여면수는 `pkfc_Available_ParkingLots_total`, 총면수는 `pkfc_ParkingLots_total`을 사용합니다. 제공 기관 설명에 따르면 실시간 데이터가 시설정보보다 적습니다.
+예시 `123456` 대신 발급받은 인증번호를 입력하세요. 성공 응답은 201입니다.
 
-## 테스트
+```json
+{
+  "message": "계정이 생성되었습니다.",
+  "user": {"id": "사용자 UUID", "email": "driver@example.com", "nickname": "주차왕"}
+}
+```
+
+3. 로그인: `POST /api/auth/login`
+
+```json
+{"email": "driver@example.com", "password": "ParkingPot!123"}
+```
+
+```json
+{
+  "message": "로그인이 되었습니다.",
+  "access_token": "발급된 세션 토큰",
+  "token_type": "bearer",
+  "expires_in": 604800,
+  "user": {"id": "사용자 UUID", "email": "driver@example.com", "nickname": "주차왕"}
+}
+```
+
+4. `GET /api/users/me`에 인증 헤더를 넣으면 `id`, `email`, `nickname`을 반환합니다.
+
+요구사항의 마이페이지 ‘비밀번호 확인’은 현재 비밀번호 입력 후
+`POST /api/users/me/password/verify`에 `{"password": "현재 비밀번호"}`를 보내는 동작으로
+구현했습니다. 비밀번호 원문·해시·비밀번호 확인 값은 조회·수정 응답에 포함하지 않습니다.
+이 확인 API는 확인 메시지만 반환하며, 수정 권한을 추가로 발급하지 않습니다.
+
+## 마이페이지 수정
+
+`PATCH /api/users/me`에 바꿀 필드만 보냅니다. 닉네임은 2~30자, 비밀번호는 8~128자입니다.
+이메일은 소문자로 통일하고 닉네임 앞뒤 공백은 제거합니다. 이메일과 닉네임은 중복될 수 없습니다.
+빈 수정 요청, 명시적 `null`, 알 수 없는 필드, 비밀번호 확인 불일치는 422입니다.
+
+닉네임만 바꾸려면:
+
+```json
+{"nickname": "새닉네임"}
+```
+
+이메일은 로그인 상태에서 **새 이메일**로 `purpose: "email_change"` 인증번호를 요청한 뒤:
+
+```json
+{"email": "new@example.com", "email_verification_code": "123456"}
+```
+
+비밀번호는 로그인 상태에서 **현재 이메일**로 `purpose: "password_change"` 인증번호를 요청한 뒤:
+
+```json
+{
+  "password": "NewParkingPot!456",
+  "password_confirm": "NewParkingPot!456",
+  "password_verification_code": "123456"
+}
+```
+
+이메일과 비밀번호를 함께 수정하려면 **새 이메일 인증번호와 현재 이메일의 비밀번호 변경
+인증번호 두 개**를 각각 제출합니다. 모든 인증과 중복 검사가 끝난 뒤 전체 변경을 한 번에 저장합니다.
+수정 후 인증하는 대신, 이메일 인증에 성공한 경우에만 비밀번호가 변경됩니다.
+
+성공 응답:
+
+```json
+{
+  "message": "수정이 완료 되었습니다",
+  "user": {"id": "사용자 UUID", "email": "new@example.com", "nickname": "새닉네임"},
+  "requires_login": true
+}
+```
+
+닉네임만 변경하면 `requires_login`은 `false`입니다. 이메일 또는 비밀번호를 변경하면
+모든 세션과 해당 계정의 미사용 인증번호를 폐기하며, 변경된 정보로 다시 로그인해야 합니다.
+
+## 로그아웃·탈퇴 및 화면 이동
+
+로그아웃과 탈퇴는 요청 본문 없이 인증 헤더만 보냅니다.
+
+- 로그아웃 성공: `{"message": "로그아웃이 되었습니다."}`. 현재 기기의 토큰만 폐기합니다.
+- 탈퇴 성공: `{"message": "회원 탈퇴가 완료되었습니다"}`. 계정과 모든 세션·계정에 연결된
+  인증번호를 삭제합니다. 프론트엔드에는 탈퇴 확인 UI를 두는 것을 권장합니다.
+- 로그인 성공 후 홈 이동, 로그아웃·탈퇴 후 토큰 제거 및 로그인 화면 이동은 프론트엔드가 처리합니다.
+- 만료·폐기된 토큰은 401을 반환합니다. 프론트엔드는 저장한 토큰을 지우고 로그인 화면으로 안내하세요.
+
+## 오류 응답
+
+업무 오류는 `{"detail": "오류 메시지"}`입니다. 입력 형식 오류(422)는 `detail`에
+`loc`, `msg`, `type`으로 구성된 배열을 반환합니다. 제출한 비밀번호와 인증번호를 오류 응답에
+다시 넣지 않습니다.
+
+| 상태 | 의미 |
+| --- | --- |
+| 400 | 인증번호 불일치·만료·미요청, 잘못된 현재 비밀번호 |
+| 401 | 로그인 필요, 잘못된 로그인 정보, 세션 만료 |
+| 409 | 중복 이메일 또는 닉네임 |
+| 422 | 입력값 형식 오류·비밀번호 확인 불일치 |
+| 429 | 요청 횟수 초과·인증번호 재발송 대기·인증 시도 초과 |
+| 503 | 메일 발송 실패. 이전에 발급된 유효한 인증번호는 유지됨 |
+
+인증번호는 6자리 숫자 문자열이며 기본 10분간 유효합니다. 60초 후 재발송할 수 있고,
+재발송하면 이전 번호는 무효입니다. 번호당 오입력 5회 후에는 새로 발급받아야 합니다.
+인증번호는 목적과 계정에 연결되며 다른 사용자의 번호를 사용할 수 없습니다.
+
+메일 요청은 IP당 1시간 10회, 회원가입은 IP당 10분 20회, 로그인은 이메일당 5분 10회 및
+IP당 5분 50회입니다. 현재 비밀번호 확인은 사용자·IP 조합당 5분 10회입니다.
+로그인은 성공·실패 모두 횟수에 포함합니다. 시간 제한에 따른 429에는 `Retry-After` 헤더가 있습니다.
+
+## 실제 이메일 발송
+
+`.env`에서 `MAIL_BACKEND=smtp`로 바꾸고 `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`,
+`SMTP_PASSWORD`, `MAIL_FROM`을 메일 서비스에 맞게 설정하세요. 기본 방식은 STARTTLS(587)이며
+SSL(465)은 `SMTP_SECURITY=ssl`을 사용합니다. 비밀번호는 `.env`에만 저장하고 커밋하지 않습니다.
+
+운영 시 `APP_ENV=production`, 32자 이상의 무작위 `AUTH_SECRET`, TLS를 사용하는 SMTP가
+필요하며 잘못 설정하면 실행을 중단합니다. 인증번호 해시는 이 키를 사용하므로 재시작·여러 워커에서
+동일한 키를 써야 합니다. 개발 모드에서 키를 생략하면 재시작 시 미사용 인증번호가 무효화됩니다.
+
+비밀번호는 Argon2로, 세션 토큰은 SHA-256으로, 인증번호는 HMAC-SHA256으로 저장합니다.
+운영에서는 HTTPS와 명시적인 `CORS_ORIGINS`를 설정하고 `--reload` 없이 실행하세요.
+프록시 뒤에 배포한다면 uvicorn의 신뢰할 프록시 IP를 제한해 실제 클라이언트 IP를 전달하세요.
+SQLite는 로컬·소규모 실행 기준이며, SMTP 발송 중 인증번호 저장 트랜잭션을 유지합니다.
+대규모 배포의 메일 큐·DB 마이그레이션 도구·만료된 인증번호의 정기 정리는 포함하지 않았습니다.
+
+## 검증과 API 명세
 
 ```powershell
-.venv\Scripts\python -m pytest -q
+uv run pytest -q
+uv run ruff check app tests scripts
+uv run ruff format --check app tests scripts
+uv run python -m scripts.export_openapi
 ```
 
-테스트는 공공 API 키 없이 샘플 응답으로 검색·필터·거리·혼잡도·즐겨찾기·별점을 검증합니다.
+API 정의의 원본은 FastAPI의 라우트와 Pydantic 모델입니다. `docs/openapi.json`은 위 명령으로
+생성한 스냅샷으로, API를 바꾸면 다시 생성하세요. Postman에도 OpenAPI 파일을 가져올 수 있습니다.
+테스트는 임시 SQLite DB, 파일 메일함, 로컬 SMTP 테스트 서버를 사용하며 실제 메일을 발송하지 않습니다.
+SMTP 수신 성공·실패를 로컬에서 검증하지만 실제 메일 서비스의 자격증명·TLS 연결·수신함 도착은
+사용할 SMTP 계정 설정 후 별도로 확인해야 합니다.
+
+FastAPI 테스트 방식은 [공식 테스트 문서](https://fastapi.tiangolo.com/tutorial/testing/)를 참고했습니다.
+
+## 백엔드 협업 구조
+
+```text
+app/
+├── main.py             # 앱 시작, 공통 미들웨어, 도메인 테이블 초기화
+├── api/
+│   ├── router.py       # 도메인 라우터를 /api 아래 등록
+│   └── dependencies.py # 공유 의존성 CurrentUser, DatabaseDep
+├── core/config.py      # 환경 설정
+├── db/database.py      # SQLite 연결과 트랜잭션
+├── integrations/      # 공용 메일 발송
+├── common/            # 공통 HTTP 오류
+├── parking_api.py      # 주차장 HTTP 경로
+├── parking_db.py       # 주차장용 SQLite 테이블
+├── parking.py          # 검색·응답 변환
+├── realtime.py         # 실시간 데이터 갱신
+├── sources.py          # 공공데이터 호출
+├── sync.py             # 주차장 데이터 동기화
+└── modules/auth/      # 회원가입, 로그인, 마이페이지, 탈퇴
+    ├── router.py      # HTTP 경로
+    ├── schemas.py     # 요청과 응답 모델
+    ├── service.py     # 인증 규칙과 데이터 처리
+    ├── tables.py      # 회원, 세션, 인증번호 테이블
+    ├── dependencies.py # 인증 내부 의존성과 공개 사용자 정보
+    └── security.py    # 비밀번호, 토큰, 인증번호 해시
+tests/auth/            # 인증 API와 메일 테스트
+```
+
+팀원은 `app/modules/<담당기능>/`에 도메인 코드를 두고 `tests/<담당기능>/`에 테스트를 작성합니다.
+회원 라우터는 `app/api/router.py`에 등록합니다. 주차장 라우터는 `app/main.py`에 등록되어 있습니다. 새 회원 테이블이 필요하면 도메인의 `tables.py`에
+정의한 SQL을 `app/main.py`의 `database.initialize(...)`에 추가합니다. 기존 테이블의 구조를
+바꿀 때는 기존 데이터에 적용할 마이그레이션을 별도로 준비해야 합니다.
+
+로그인이 필요한 라우트는 `app.api.dependencies.CurrentUser`로 `id`, `email`, `nickname`을
+받습니다. 다른 도메인에서 계정 소유자를 연결할 때는 `user["id"]`를 사용합니다.
+같은 모듈의 `DatabaseDep`로 앱의 DB 연결을 가져올 수 있습니다. 도메인 내부의 인증 SQL과
+비밀번호 해시는 `auth`에서 관리합니다. 마이페이지 경로는 `/api/users/me`를 사용합니다.

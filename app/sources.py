@@ -1,7 +1,8 @@
 """Public data API adapters. Provider field names stay inside this module."""
 
-import httpx
 import time
+
+import httpx
 
 from app.config import Settings
 
@@ -45,9 +46,30 @@ def fetch_page(
     sigungu_code: str | None = None,
 ) -> tuple[list[dict], int]:
     urls = {
-        "catalog": (settings.catalog_url, "items", "type", "json", settings.catalog_service_key, "PARKING_CATALOG_SERVICE_KEY"),
-        "facility": (settings.facility_url, "PrkSttusInfo", "format", 2, settings.status_service_key, "PARKING_STATUS_SERVICE_KEY"),
-        "realtime": (settings.realtime_url, "PrkRealtimeInfo", "format", 2, settings.status_service_key, "PARKING_STATUS_SERVICE_KEY"),
+        "catalog": (
+            settings.catalog_url,
+            "items",
+            "type",
+            "json",
+            settings.catalog_service_key,
+            "PARKING_CATALOG_SERVICE_KEY",
+        ),
+        "facility": (
+            settings.facility_url,
+            "PrkSttusInfo",
+            "format",
+            2,
+            settings.status_service_key,
+            "PARKING_STATUS_SERVICE_KEY",
+        ),
+        "realtime": (
+            settings.realtime_url,
+            "PrkRealtimeInfo",
+            "format",
+            2,
+            settings.status_service_key,
+            "PARKING_STATUS_SERVICE_KEY",
+        ),
     }
     url, field, format_key, format_value, service_key, key_name = urls[kind]
     service_key = service_key.strip()
@@ -87,13 +109,16 @@ def fetch_page(
             if attempt < 3:
                 time.sleep(2**attempt)
                 continue
-            raise SourceError(f"공공데이터 API 시간 초과 ({kind}, {page}페이지, 4회 시도)") from None
+            raise SourceError(
+                f"공공데이터 API 시간 초과 ({kind}, {page}페이지, 4회 시도)"
+            ) from None
         except httpx.TransportError:
             if attempt < 3:
                 time.sleep(2**attempt)
                 continue
-            raise SourceError(f"공공데이터 API 연결 오류 ({kind}, {page}페이지, 4회 시도)") from None
+            raise SourceError(
+                f"공공데이터 API 연결 오류 ({kind}, {page}페이지, 4회 시도)"
+            ) from None
         except (ValueError, TypeError, KeyError):
             raise SourceError(f"공공데이터 API 응답 해석 실패 ({kind}, {page}페이지)") from None
     raise AssertionError("unreachable")
-
