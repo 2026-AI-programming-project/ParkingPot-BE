@@ -291,7 +291,7 @@ def sync(
                 page += 1
             counts[kind] = imported
             if kind in {"catalog", "facility", "realtime"}:
-                counts["new_links"] = link_facilities(settings)
+                counts["new_links"] = counts.get("new_links", 0) + link_facilities(settings)
     with connect(settings) as connection:
         counts["linked_realtime_statuses"] = connection.execute(
             """SELECT COUNT(*) FROM realtime_status s

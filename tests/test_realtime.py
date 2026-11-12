@@ -1,12 +1,14 @@
 import threading
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
+from app.parking_api import realtime_health
 from app.parking_db import connect, init_db
-from app.realtime import refresh_realtime_once
+from app.realtime import RealtimeRefresher, refresh_realtime_once
 from app.sources import SourceError
 from app.sync import _save_page, link_facilities
 
@@ -64,6 +66,69 @@ def test_successful_refresh_saves_all_pages(tmp_path, monkeypatch):
     assert pages[0][1] == {"sido_code": "11", "sigungu_code": "11110"}
     with connect(settings) as connection:
         assert connection.execute("SELECT COUNT(*) FROM realtime_status").fetchone()[0] == 2
+
+
+def test_refresher_repairs_links_when_status_arrives(tmp_path, monkeypatch):
+    settings = Settings(database_path=str(tmp_path / "links.db"), status_service_key="test-key")
+    init_db(settings)
+    with connect(settings) as connection:
+        _save_page(
+            connection,
+            "catalog",
+            [
+                {
+                    "prkplceNo": "A",
+                    "prkplceNm": "시청 주차장",
+                    "latitude": "37.5",
+                    "longitude": "127.0",
+                }
+            ],
+        )
+        _save_page(
+            connection,
+            "facility",
+            [
+                {
+                    "prk_center_id": "RT-A",
+                    "prk_plce_nm": "시청 주차장",
+                    "prk_plce_entrc_la": "37.5",
+                    "prk_plce_entrc_lo": "127.0",
+                }
+            ],
+        )
+    linked = threading.Event()
+
+    def fake_refresh(config, stop):
+        with connect(config) as connection:
+            _save_page(connection, "realtime", [_status(8)])
+        return 1
+
+    def track_link(config):
+        result = link_facilities(config)
+        linked.set()
+        return result
+
+    monkeypatch.setattr("app.realtime.refresh_realtime_once", fake_refresh)
+    monkeypatch.setattr("app.realtime.link_facilities", track_link)
+    refresher = RealtimeRefresher(settings)
+    refresher.start()
+    try:
+        assert linked.wait(timeout=3)
+        with connect(settings) as connection:
+            assert (
+                connection.execute(
+                    "SELECT source_id FROM realtime_links WHERE parking_id = 'A'"
+                ).fetchone()[0]
+                == "RT-A"
+            )
+        health = realtime_health(
+            SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(settings=settings)))
+        )
+        assert health["source_statuses"] == 1
+        assert health["source_statuses_with_facility"] == 1
+        assert health["fresh_linked_lots"] == 1
+    finally:
+        refresher.stop()
 
 
 def test_server_refreshes_live_data_on_startup(tmp_path, monkeypatch):

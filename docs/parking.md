@@ -25,6 +25,8 @@ API 문서는 `http://127.0.0.1:8000/docs`에서 볼 수 있습니다. 처음 �
 
 전국 시설정보는 약 170만 건이며 실제 조회에서 깊은 페이지가 반복 시간 초과됐습니다. 그래서 시설정보를 포함한 명령에는 지역코드가 필요합니다. 기본정보를 이미 가져왔다면 `.venv\Scripts\python -m app.sync --kind facility --sido-code 11 --sigungu-code 11110` 다음에 `.venv\Scripts\python -m app.sync --kind realtime --sido-code 11 --sigungu-code 11110`을 실행하세요. 다른 지역은 코드를 바꾸면 됩니다. 전국 시설정보를 꼭 시도하려면 `--allow-nationwide-facility`를 명시해야 하며 시간 초과 가능성이 있습니다. 기존 전국 조회의 이어받기 위치는 지역별 조회와 별도로 보존됩니다. 운영 시에는 기본정보를 정기적으로, 실시간 정보는 별도 주기로 갱신해야 합니다. 실시간 응답은 가져온 지 10분이 지나면 `unknown`으로 표시됩니다.
 
+API 서버는 `PARKING_STATUS_SERVICE_KEY`가 설정되어 있으면 시작할 때 실시간정보를 가져오고 이후 `PARKING_REALTIME_REFRESH_SECONDS`(기본 120초)마다 갱신합니다. `.env`에 `PARKING_REALTIME_SIDO_CODE`와 `PARKING_REALTIME_SIGUNGU_CODE`를 설정하면 해당 지역만 조회합니다. 시설정보도 같은 지역으로 동기화해야 주차장과 연결됩니다. `GET /health/realtime`에서 `source_statuses`(저장된 실시간 원천 건수), `source_statuses_with_facility`(시설정보가 있는 원천 건수), `linked_lots`(앱 주차장과 연결된 건수), `fresh_linked_lots`(최근 10분 내 갱신된 연결 건수)를 확인할 수 있습니다. 원천 제공기관은 시설정보보다 실시간정보를 적게 제공하므로, 연결과 갱신이 정상이어도 일부 주차장은 `unknown`입니다.
+
 ## API
 
 | 기능                | 경로                                           | 주요 입력·출력                                                                                |
