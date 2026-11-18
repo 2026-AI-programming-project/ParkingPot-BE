@@ -1,6 +1,7 @@
 """Parking lot search and response formatting."""
 
 from datetime import UTC, datetime, timedelta
+from urllib.parse import quote
 
 from app.geo import bounds, distance_m
 
@@ -189,6 +190,26 @@ def search_lots(
         "page_size": page_size,
         "nearest_id": nearest_id,
     }
+
+
+def get_lot_location(connection, parking_id: str):
+    return connection.execute(
+        "SELECT name, latitude, longitude FROM parking_lots WHERE id = ?", (parking_id,)
+    ).fetchone()
+
+
+def kakao_directions_urls(lot, origin: tuple[float, float] | None) -> tuple[str | None, str]:
+    destination = f"{lot['latitude']},{lot['longitude']}"
+    destination_name = quote(lot["name"], safe="")
+    destination_path = f"{destination_name},{destination}"
+    if origin is None:
+        return None, f"https://map.kakao.com/link/to/{destination_path}"
+
+    start = f"{origin[0]},{origin[1]}"
+    app_url = f"kakaomap://route?sp={start}&ep={destination}&by=car"
+    start_name = quote("출발지", safe="")
+    web_url = f"https://map.kakao.com/link/by/car/{start_name},{start}/{destination_path}"
+    return app_url, web_url
 
 
 def get_lot(connection, parking_id: str) -> dict | None:

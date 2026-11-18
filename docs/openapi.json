@@ -587,6 +587,91 @@
         }
       }
     },
+    "/parking-lots/{parking_id}/directions": {
+      "get": {
+        "summary": "카카오맵 주차장 길찾기",
+        "operationId": "parking_lot_directions_parking_lots__parking_id__directions_get",
+        "parameters": [
+          {
+            "name": "parking_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Parking Id"
+            }
+          },
+          {
+            "name": "lat",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "maximum": 90,
+                  "minimum": -90
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "출발지 위도 (WGS84)",
+              "title": "Lat"
+            },
+            "description": "출발지 위도 (WGS84)"
+          },
+          {
+            "name": "lon",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "maximum": 180,
+                  "minimum": -180
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "출발지 경도 (WGS84)",
+              "title": "Lon"
+            },
+            "description": "출발지 경도 (WGS84)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParkingDirections"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "주차장 없음"
+          },
+          "409": {
+            "description": "유효한 목적지 좌표 없음"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/parking-lots/{parking_id}/congestion": {
       "get": {
         "summary": "Parking Lot Congestion",
@@ -986,6 +1071,65 @@
           "message"
         ],
         "title": "MessageResponse"
+      },
+      "ParkingDestination": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "latitude": {
+            "type": "number",
+            "title": "Latitude"
+          },
+          "longitude": {
+            "type": "number",
+            "title": "Longitude"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "latitude",
+          "longitude"
+        ],
+        "title": "ParkingDestination"
+      },
+      "ParkingDirections": {
+        "properties": {
+          "parking_id": {
+            "type": "string",
+            "title": "Parking Id"
+          },
+          "destination": {
+            "$ref": "#/components/schemas/ParkingDestination"
+          },
+          "app_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App Url",
+            "description": "출발 좌표를 전달했을 때 카카오맵 앱에서 열 자동차 길찾기 링크"
+          },
+          "web_url": {
+            "type": "string",
+            "title": "Web Url",
+            "description": "카카오맵 앱을 열 수 없거나 출발 좌표가 없을 때 사용할 웹 링크"
+          }
+        },
+        "type": "object",
+        "required": [
+          "parking_id",
+          "destination",
+          "app_url",
+          "web_url"
+        ],
+        "title": "ParkingDirections"
       },
       "PasswordVerifyRequest": {
         "properties": {
