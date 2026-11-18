@@ -21,6 +21,32 @@ def _status(available: int) -> dict:
     }
 
 
+def test_implicit_app_uses_parking_environment_with_custom_auth_db(tmp_path, monkeypatch):
+    auth_path = tmp_path / "custom-members.sqlite3"
+    parking_path = tmp_path / "synced-parking.db"
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("MAIL_BACKEND", "file")
+    monkeypatch.setenv("DATABASE_PATH", str(auth_path))
+    monkeypatch.setenv("PARKING_DB_PATH", str(parking_path))
+    monkeypatch.setenv("PARKING_STATUS_SERVICE_KEY", "")
+    monkeypatch.setenv("PARKING_REALTIME_REFRESH_SECONDS", "42")
+
+    parking = Settings(database_path=str(parking_path))
+    init_db(parking)
+    with connect(parking) as connection:
+        connection.execute(
+            "INSERT INTO parking_lots (id, name) VALUES (?, ?)", ("SYNCED", "동기화 주차장")
+        )
+
+    with TestClient(create_app()) as client:
+        assert auth_path.is_file()
+        response = client.get("/parking-lots/SYNCED")
+        assert response.status_code == 200
+        assert response.json()["name"] == "동기화 주차장"
+        assert client.get("/health/realtime").json()["refresh_interval_seconds"] == 42
+    assert not (tmp_path / "parking.sqlite3").exists()
+
+
 def test_failed_refresh_keeps_previous_snapshot(tmp_path, monkeypatch):
     settings = Settings(database_path=str(tmp_path / "realtime.db"), status_service_key="test-key")
     init_db(settings)

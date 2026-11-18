@@ -33,12 +33,13 @@ def create_app(
                 settings,
                 database_path=Path(parking_settings.database_path).with_suffix(".auth.sqlite3"),
             )
-    if parking_settings is None:
-        parking_settings = (
-            ParkingSettings(database_path=str(settings.database_path.parent / "parking.sqlite3"))
-            if settings.database_path != Path("data/parkingpot.sqlite3")
-            else ParkingSettings.from_env()
+    elif parking_settings is None and settings.database_path != Path("data/parkingpot.sqlite3"):
+        # Keep callers using an isolated auth database isolated from the parking database too.
+        parking_settings = ParkingSettings(
+            database_path=str(settings.database_path.parent / "parking.sqlite3")
         )
+    if parking_settings is None:
+        parking_settings = ParkingSettings.from_env()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
