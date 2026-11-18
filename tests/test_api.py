@@ -1,3 +1,5 @@
+from urllib.parse import parse_qs, unquote, urlsplit
+
 from fastapi.testclient import TestClient
 
 from app.config import Settings
@@ -121,6 +123,64 @@ def test_search_nearby_congestion_favorites_and_ratings(tmp_path):
         assert client.delete("/favorites/A", headers=headers).status_code == 200
         assert client.get("/favorites", headers=headers).json()["items"] == []
         assert client.get("/favorites").status_code == 401
+
+
+def test_directions_use_selected_parking_lot_and_optional_origin(tmp_path):
+    settings = Settings(database_path=str(tmp_path / "test.db"))
+    name = "시청 / 주차장 #1"
+    with TestClient(create_app(parking_settings=settings)) as client:
+        with connect(settings) as connection:
+            _save_page(
+                connection,
+                "catalog",
+                [
+                    _catalog("A", "다른 주차장", "35.1", "129.1", "무료", "0"),
+                    _catalog("B", name, "37.5665", "126.9780", "유료", "1000"),
+                ],
+            )
+
+        response = client.get("/parking-lots/B/directions", params={"lat": 37.55, "lon": 126.99})
+        assert response.status_code == 200
+        route = response.json()
+        assert route["parking_id"] == "B"
+        assert route["destination"] == {"name": name, "latitude": 37.5665, "longitude": 126.978}
+        app_url = urlsplit(route["app_url"])
+        assert (app_url.scheme, app_url.netloc) == ("kakaomap", "route")
+        assert parse_qs(app_url.query) == {
+            "sp": ["37.55,126.99"],
+            "ep": ["37.5665,126.978"],
+            "by": ["car"],
+        }
+        web_url = urlsplit(route["web_url"])
+        assert (web_url.scheme, web_url.netloc) == ("https", "map.kakao.com")
+        prefix, departure, destination = web_url.path.rsplit("/", 2)
+        assert prefix == "/link/by/car"
+        assert unquote(departure) == "출발지,37.55,126.99"
+        assert unquote(destination) == f"{name},37.5665,126.978"
+        assert not web_url.query and not web_url.fragment
+
+        response = client.get("/parking-lots/B/directions")
+        assert response.status_code == 200
+        assert response.json()["app_url"] is None
+        web_path = urlsplit(response.json()["web_url"]).path
+        assert web_path.startswith("/link/to/")
+        assert unquote(web_path.removeprefix("/link/to/")) == f"{name},37.5665,126.978"
+
+
+def test_directions_reject_missing_parking_coordinates_and_invalid_origin(tmp_path):
+    settings = Settings(database_path=str(tmp_path / "test.db"))
+    with TestClient(create_app(parking_settings=settings)) as client:
+        with connect(settings) as connection:
+            connection.executemany(
+                "INSERT INTO parking_lots(id, name, latitude, longitude) VALUES (?, ?, ?, ?)",
+                [("A", "좌표 없음", None, None), ("B", "범위 오류", 37, 181), ("C", "미상", 0, 0)],
+            )
+
+        assert client.get("/parking-lots/unknown/directions").status_code == 404
+        for parking_id in ("A", "B", "C"):
+            assert client.get(f"/parking-lots/{parking_id}/directions").status_code == 409
+        for params in ({"lat": 37}, {"lon": 127}, {"lat": 91, "lon": 127}):
+            assert client.get("/parking-lots/A/directions", params=params).status_code == 422
 
 
 def test_stale_congestion_is_unknown(tmp_path):

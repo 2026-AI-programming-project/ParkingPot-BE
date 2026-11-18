@@ -33,6 +33,7 @@ API 서버는 `PARKING_STATUS_SERVICE_KEY`가 설정되어 있으면 시작할 �
 | ------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | 검색·주변 조회·필터 | `GET /parking-lots`                            | `name`, `address`, `lat`, `lon`, `radius_m`, `fee`, `accessible`, `sort`, `page`, `page_size` |
 | 상세                | `GET /parking-lots/{id}`                       | 요금, 1시간 예상 요금, 운영시간, 키워드, 별점, 혼잡도                                         |
+| 카카오맵 길찾기     | `GET /parking-lots/{id}/directions`            | 선택한 주차장 목적지 좌표와 `app_url`, `web_url`                                         |
 | 혼잡도              | `GET /parking-lots/{id}/congestion`            | 잔여면수 비율, 색상, 조회 시각                                                                |
 | 익명 세션 발급      | `POST /sessions/anonymous`                     | 즐겨찾기·별점용 Bearer 토큰                                                                   |
 | 즐겨찾기            | `GET /favorites`, `PUT/DELETE /favorites/{id}` | 세션별 주차장 목록·등록·해제                                                                  |
@@ -51,6 +52,21 @@ API 서버는 `PARKING_STATUS_SERVICE_KEY`가 설정되어 있으면 시작할 �
 즐겨찾기와 별점 요청에는 `Authorization: Bearer <access_token>`이 필요합니다. 토큰은 `POST /sessions/anonymous`에서 발급하며, 잃어버리면 해당 익명 사용자의 즐겨찾기를 복구할 수 없습니다. 계정 로그인과 기기 간 동기화는 아직 지원하지 않습니다.
 
 리뷰 조회는 로그인 없이 가능하며, 응답의 각 항목은 `id`, `user_id`(회원 UUID), `user_nickname`, `content`, `created_at`(UTC ISO 8601)을 포함합니다. 리뷰 등록은 회원 로그인 토큰을 `Authorization: Bearer <access_token>`에 넣어야 합니다. 본문은 `{"content":"주차장 이용 경험을 작성해 주세요."}` 형식이며 공백만 입력한 댓글은 허용하지 않습니다. 성공하면 201과 `{"message":"댓글이 등록되었습니다.","review":...}`를 반환합니다. 댓글은 주차장 DB에 저장되고 주차장 삭제 시 함께 삭제됩니다.
+## 카카오맵 길찾기
+
+검색 결과의 주차장 ID로 `GET /parking-lots/{id}/directions`를 호출합니다. 예를 들어 현재 위치를
+사용하려면 프론트엔드에서 위치 권한을 받은 뒤 `GET /parking-lots/A/directions?lat=37.55&lon=126.99`
+처럼 WGS84 위도·경도를 함께 보냅니다. 목적지는 서버에 저장된 선택 주차장의 좌표를 사용합니다.
+
+길찾기 버튼에서 응답의 `app_url`을 열면 카카오맵 앱에서 전달받은 출발지와 목적지로 자동차 경로를
+조회합니다. 앱 링크를 열 수 없으면 `web_url`을 엽니다. 위치 권한이 없거나 출발 좌표를 보내지
+않으면 `app_url`은 `null`이고, `web_url`을 열어 목적지가 채워진 상태에서 출발지를 선택할 수 있습니다.
+프론트엔드가 링크 열기를 담당하며, 주행 안내 시작은 카카오맵 화면에서 진행합니다.
+
+주차장 ID가 없으면 `404`, 저장된 목적지 좌표가 없거나 유효하지 않으면 `409`, 출발 좌표가 한 쪽만
+있거나 범위를 벗어나면 `422`를 반환합니다. 링크 발급에 별도 카카오 API 키는 필요 없습니다.
+[카카오맵 앱 URL 스킴](https://apis.map.kakao.com/android_v2/docs/api-guide/urlscheme/) ·
+[카카오맵 웹 길찾기 링크](https://apis.map.kakao.com/web/guide/#routeurl)
 
 ## 데이터 연결
 

@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
-from app.parking import get_lot, search_lots
+from app.parking import get_lot, get_lot_location, kakao_directions_urls, search_lots
 from app.parking_db import connect
 
 router = APIRouter()
@@ -15,6 +15,23 @@ router = APIRouter()
 
 class RatingInput(BaseModel):
     score: int = Field(ge=1, le=5)
+
+
+class ParkingDestination(BaseModel):
+    name: str
+    latitude: float
+    longitude: float
+
+
+class ParkingDirections(BaseModel):
+    parking_id: str
+    destination: ParkingDestination
+    app_url: str | None = Field(
+        description="출발 좌표를 전달했을 때 카카오맵 앱에서 열 자동차 길찾기 링크"
+    )
+    web_url: str = Field(
+        description="카카오맵 앱을 열 수 없거나 출발 좌표가 없을 때 사용할 웹 링크"
+    )
 
 
 def _settings(request: Request):
@@ -120,6 +137,48 @@ def parking_lot_detail(parking_id: str, request: Request) -> dict:
     if lot is None:
         raise HTTPException(status_code=404, detail="주차장을 찾을 수 없습니다")
     return lot
+
+
+@router.get(
+    "/parking-lots/{parking_id}/directions",
+    response_model=ParkingDirections,
+    summary="카카오맵 주차장 길찾기",
+    responses={
+        404: {"description": "주차장 없음"},
+        409: {"description": "유효한 목적지 좌표 없음"},
+    },
+)
+def parking_lot_directions(
+    parking_id: str,
+    request: Request,
+    lat: float | None = Query(default=None, ge=-90, le=90, description="출발지 위도 (WGS84)"),
+    lon: float | None = Query(default=None, ge=-180, le=180, description="출발지 경도 (WGS84)"),
+) -> ParkingDirections:
+    if (lat is None) != (lon is None):
+        raise HTTPException(status_code=422, detail="lat와 lon은 함께 입력해야 합니다")
+
+    with connect(_settings(request)) as connection:
+        lot = get_lot_location(connection, parking_id)
+    if lot is None:
+        raise HTTPException(status_code=404, detail="주차장을 찾을 수 없습니다")
+    latitude, longitude = lot["latitude"], lot["longitude"]
+    if not (
+        isinstance(latitude, (float, int))
+        and isinstance(longitude, (float, int))
+        and -90 <= latitude <= 90
+        and -180 <= longitude <= 180
+        and (latitude, longitude) != (0, 0)
+    ):
+        raise HTTPException(status_code=409, detail="주차장 길찾기에 사용할 좌표가 없습니다")
+
+    origin = (lat, lon) if lat is not None and lon is not None else None
+    app_url, web_url = kakao_directions_urls(lot, origin)
+    return ParkingDirections(
+        parking_id=parking_id,
+        destination=ParkingDestination(name=lot["name"], latitude=latitude, longitude=longitude),
+        app_url=app_url,
+        web_url=web_url,
+    )
 
 
 @router.get("/parking-lots/{parking_id}/congestion")
