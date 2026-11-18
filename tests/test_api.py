@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from fastapi.testclient import TestClient
@@ -219,3 +220,30 @@ def test_stale_congestion_is_unknown(tmp_path):
                 "UPDATE realtime_status SET fetched_at = ?", ("2020-01-01T00:00:00+00:00",)
             )
         assert client.get("/parking-lots/A/congestion").json()["level"] == "unknown"
+
+
+def test_congestion_display_percentage_and_color_agree_at_thresholds(tmp_path):
+    settings = Settings(database_path=str(tmp_path / "test.db"))
+    with TestClient(create_app(parking_settings=settings)) as client:
+        with connect(settings) as connection:
+            connection.execute("INSERT INTO parking_lots (id, name) VALUES ('A', '시청 주차장')")
+            connection.execute(
+                "INSERT INTO realtime_facilities (source_id, name) VALUES ('RT-A', '시청 주차장')"
+            )
+            connection.execute("INSERT INTO realtime_links VALUES ('A', 'RT-A')")
+            connection.execute(
+                "INSERT INTO realtime_status VALUES ('RT-A', 1000, 0, ?)",
+                (datetime.now(UTC).isoformat(),),
+            )
+        for available, percent, color in (
+            (199, 19, "red"),
+            (200, 20, "yellow"),
+            (499, 49, "yellow"),
+            (500, 50, "green"),
+        ):
+            with connect(settings) as connection:
+                connection.execute("UPDATE realtime_status SET available_spaces = ?", (available,))
+            response = client.get("/parking-lots/A/congestion")
+            assert response.status_code == 200
+            assert response.json()["available_percent"] == percent
+            assert response.json()["color"] == color

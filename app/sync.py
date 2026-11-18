@@ -3,13 +3,14 @@
 import argparse
 import sys
 from collections import defaultdict
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from math import ceil
 
 import httpx
 
 from app.config import Settings
 from app.geo import distance_m
+from app.parking import REALTIME_STATUS_MAX_AGE
 from app.parking_db import connect, init_db
 from app.sources import SourceError, fetch_page
 
@@ -163,7 +164,7 @@ def _normal_name(value: str) -> str:
 def link_facilities(settings: Settings) -> int:
     """Link unique matches, preferring a facility with recent status."""
     with connect(settings) as connection:
-        cutoff = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
+        cutoff = (datetime.now(UTC) - REALTIME_STATUS_MAX_AGE).isoformat()
         lots = connection.execute(
             "SELECT id, name, latitude, longitude FROM parking_lots"
         ).fetchall()

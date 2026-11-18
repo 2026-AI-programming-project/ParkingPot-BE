@@ -5,6 +5,8 @@ from urllib.parse import quote
 
 from app.geo import bounds, distance_m
 
+REALTIME_STATUS_MAX_AGE = timedelta(minutes=10)
+
 
 def _like(value: str) -> str:
     escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -29,22 +31,22 @@ def _congestion(row) -> dict:
         age = datetime.now(UTC) - datetime.fromisoformat(fetched_at)
     except ValueError:
         return result
-    if age > timedelta(minutes=10) or age < -timedelta(minutes=1):
+    if age > REALTIME_STATUS_MAX_AGE or age < -timedelta(minutes=1):
         return result
     if total is None or available is None or total <= 0 or not 0 <= available <= total:
         return result
-    ratio = available / total
+    available_percent = available * 100 // total
     level, color = (
         ("available", "green")
-        if ratio >= 0.5
+        if available_percent >= 50
         else ("moderate", "yellow")
-        if ratio >= 0.2
+        if available_percent >= 20
         else ("busy", "red")
     )
     result.update(
         level=level,
         color=color,
-        available_percent=round(ratio * 100),
+        available_percent=available_percent,
         available_spaces=available,
         total_spaces=total,
     )

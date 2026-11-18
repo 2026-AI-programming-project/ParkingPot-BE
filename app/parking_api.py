@@ -2,12 +2,18 @@
 
 import hashlib
 import secrets
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
-from app.parking import get_lot, get_lot_location, kakao_directions_urls, search_lots
+from app.parking import (
+    REALTIME_STATUS_MAX_AGE,
+    get_lot,
+    get_lot_location,
+    kakao_directions_urls,
+    search_lots,
+)
 from app.parking_db import connect
 
 router = APIRouter()
@@ -57,7 +63,7 @@ def _require_session(connection, token_hash: str) -> None:
 
 @router.get("/health/realtime")
 def realtime_health(request: Request) -> dict:
-    cutoff = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
+    cutoff = (datetime.now(UTC) - REALTIME_STATUS_MAX_AGE).isoformat()
     with connect(_settings(request)) as connection:
         latest = connection.execute("SELECT MAX(fetched_at) FROM realtime_status").fetchone()[0]
         total_lots = connection.execute("SELECT COUNT(*) FROM parking_lots").fetchone()[0]

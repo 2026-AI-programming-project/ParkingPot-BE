@@ -2,10 +2,12 @@
 
 import logging
 import threading
+from datetime import UTC, datetime
 
 import httpx
 
 from app.config import Settings
+from app.parking import REALTIME_STATUS_MAX_AGE
 from app.parking_db import connect
 from app.sources import SourceError, fetch_page
 from app.sync import _save_page, link_facilities
@@ -43,7 +45,7 @@ class RealtimeRefresher:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.stop_event = threading.Event()
-        self.linked_status_ids: set[str] | None = None
+        self.fresh_status_ids: set[str] | None = None
         self.thread = threading.Thread(
             target=self._run, name="parking-realtime-refresh", daemon=True
         )
@@ -60,14 +62,19 @@ class RealtimeRefresher:
             try:
                 count = refresh_realtime_once(self.settings, self.stop_event)
                 if not self.stop_event.is_set():
+                    cutoff = (datetime.now(UTC) - REALTIME_STATUS_MAX_AGE).isoformat()
                     with connect(self.settings) as connection:
-                        status_ids = {
+                        fresh_status_ids = {
                             row[0]
-                            for row in connection.execute("SELECT source_id FROM realtime_status")
+                            for row in connection.execute(
+                                "SELECT source_id FROM realtime_status WHERE fetched_at >= ?",
+                                (cutoff,),
+                            )
                         }
-                    if status_ids != self.linked_status_ids:
+                    # A previously seen source can become fresh again without a new row.
+                    if fresh_status_ids != self.fresh_status_ids:
                         updated = link_facilities(self.settings)
-                        self.linked_status_ids = status_ids
+                        self.fresh_status_ids = fresh_status_ids
                         if updated:
                             logger.info("실시간 주차정보 연결 %d건 갱신", updated)
                     logger.info("실시간 주차정보 %d건 갱신", count)

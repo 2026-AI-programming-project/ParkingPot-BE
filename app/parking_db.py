@@ -3,6 +3,7 @@
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 
 from app.config import Settings
 
@@ -87,5 +88,6 @@ def connect(settings: Settings) -> Iterator[sqlite3.Connection]:
 
 
 def init_db(settings: Settings) -> None:
+    Path(settings.database_path).parent.mkdir(parents=True, exist_ok=True)
     with connect(settings) as connection:
         connection.executescript(SCHEMA)

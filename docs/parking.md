@@ -47,7 +47,7 @@ API 서버는 `PARKING_STATUS_SERVICE_KEY`가 설정되어 있으면 시작할 �
 
 `hourly_price`는 기본시간·기본요금·추가단위시간·추가단위요금으로 계산한 **첫 60분 예상 요금**입니다. 데이터가 불충분하거나 혼합 요금이면 `null`입니다. 실제 할인·일일요금 등은 `fee_description`과 다를 수 있습니다. 별점은 이 서비스 사용자가 등록한 평가 평균이며, 평가 전에는 `average: null`입니다.
 
-혼잡도는 `available_spaces / total_spaces` 기준입니다. `50%` 이상은 `green`/`available`, `20%` 이상 `50%` 미만은 `yellow`/`moderate`, `20%` 미만은 `red`/`busy`입니다. 실시간 정보가 없거나 10분 넘게 갱신되지 않으면 `gray`/`unknown`입니다. `fetched_at`은 원천 데이터의 측정 시각이 아니라 **우리 서버가 가져온 시각**입니다.
+혼잡도는 `available_spaces / total_spaces` 기준입니다. `50%` 이상은 `green`/`available`, `20%` 이상 `50%` 미만은 `yellow`/`moderate`, `20%` 미만은 `red`/`busy`입니다. `available_percent`는 소수점 이하를 버린 정수입니다. 실시간 정보가 없거나 10분 넘게 갱신되지 않으면 `gray`/`unknown`입니다. `fetched_at`은 원천 데이터의 측정 시각이 아니라 **우리 서버가 가져온 시각**입니다.
 
 즐겨찾기와 별점 요청에는 `Authorization: Bearer <access_token>`이 필요합니다. 토큰은 `POST /sessions/anonymous`에서 발급하며, 잃어버리면 해당 익명 사용자의 즐겨찾기를 복구할 수 없습니다. 계정 로그인과 기기 간 동기화는 아직 지원하지 않습니다.
 
