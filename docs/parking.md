@@ -37,6 +37,8 @@ API 서버는 `PARKING_STATUS_SERVICE_KEY`가 설정되어 있으면 시작할 �
 | 익명 세션 발급      | `POST /sessions/anonymous`                     | 즐겨찾기·별점용 Bearer 토큰                                                                   |
 | 즐겨찾기            | `GET /favorites`, `PUT/DELETE /favorites/{id}` | 세션별 주차장 목록·등록·해제                                                                  |
 | 별점                | `PUT /parking-lots/{id}/rating`                | `{"score": 1~5}`; 같은 세션은 기존 별점을 변경                                                |
+| 리뷰 조회           | `GET /parking-lots/{id}/reviews`               | 댓글 내용, 작성 회원 UUID·닉네임, UTC 작성 시각                                                |
+| 리뷰 등록           | `POST /parking-lots/{id}/reviews`              | 로그인 Bearer 토큰과 `{"content": "..."}`; 300자 이내                                        |
 
 예: `GET /parking-lots?name=시청&lat=37.5665&lon=126.9780&radius_m=3000&fee=free&accessible=true&sort=distance`
 
@@ -47,6 +49,8 @@ API 서버는 `PARKING_STATUS_SERVICE_KEY`가 설정되어 있으면 시작할 �
 혼잡도는 `available_spaces / total_spaces` 기준입니다. `50%` 이상은 `green`/`available`, `20%` 이상 `50%` 미만은 `yellow`/`moderate`, `20%` 미만은 `red`/`busy`입니다. 실시간 정보가 없거나 10분 넘게 갱신되지 않으면 `gray`/`unknown`입니다. `fetched_at`은 원천 데이터의 측정 시각이 아니라 **우리 서버가 가져온 시각**입니다.
 
 즐겨찾기와 별점 요청에는 `Authorization: Bearer <access_token>`이 필요합니다. 토큰은 `POST /sessions/anonymous`에서 발급하며, 잃어버리면 해당 익명 사용자의 즐겨찾기를 복구할 수 없습니다. 계정 로그인과 기기 간 동기화는 아직 지원하지 않습니다.
+
+리뷰 조회는 로그인 없이 가능하며, 응답의 각 항목은 `id`, `user_id`(회원 UUID), `user_nickname`, `content`, `created_at`(UTC ISO 8601)을 포함합니다. 리뷰 등록은 회원 로그인 토큰을 `Authorization: Bearer <access_token>`에 넣어야 합니다. 본문은 `{"content":"주차장 이용 경험을 작성해 주세요."}` 형식이며 공백만 입력한 댓글은 허용하지 않습니다. 성공하면 201과 `{"message":"댓글이 등록되었습니다.","review":...}`를 반환합니다. 댓글은 주차장 DB에 저장되고 주차장 삭제 시 함께 삭제됩니다.
 
 ## 데이터 연결
 
