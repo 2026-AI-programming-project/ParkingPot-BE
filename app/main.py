@@ -15,6 +15,8 @@ from app.core.config import Settings as AuthSettings
 from app.db.database import Database
 from app.modules.auth.service import AuthService
 from app.modules.auth.tables import AUTH_TABLES
+from app.modules.reviews.router import router as reviews_router
+from app.modules.reviews.tables import init_db as init_reviews_db
 from app.parking_api import router as parking_router
 from app.parking_db import init_db as init_parking_db
 from app.realtime import RealtimeRefresher
@@ -43,6 +45,7 @@ def create_app(
         database = Database(settings.database_path)
         database.initialize(AUTH_TABLES)
         init_parking_db(parking_settings)
+        init_reviews_db(parking_settings)
         app.state.database = database
         app.state.auth_service = AuthService(settings, database)
         refresher = None
@@ -91,6 +94,7 @@ def create_app(
 
     app.include_router(api_router)
     app.include_router(parking_router)
+    app.include_router(reviews_router)
     return app
 
 
