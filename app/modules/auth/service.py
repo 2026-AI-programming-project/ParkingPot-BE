@@ -19,6 +19,7 @@ PURPOSE_LABELS = {
     "email_change": "이메일 변경",
     "password_change": "비밀번호 변경",
 }
+EXPIRED_CODE_RETENTION_SECONDS = 86400
 
 
 class AuthService:
@@ -71,7 +72,14 @@ class AuthService:
     def request_code(self, email: str, purpose: str, user: dict | None, ip: str):
         self.rate_limit(f"mail:ip:{ip}", 10, 3600)
         now = int(self.now())
+        reservation_id = uuid4().hex
+        reservation_ttl = max(60, self.settings.smtp_timeout_seconds * 10)
         with self.database.connect(write=True) as db:
+            db.execute("DELETE FROM email_deliveries WHERE expires_at <= ?", (now,))
+            db.execute(
+                "DELETE FROM email_verifications WHERE expires_at <= ? AND sent_at <= ?",
+                (now - EXPIRED_CODE_RETENTION_SECONDS, now - self.settings.code_resend_seconds),
+            )
             user_id = None
             if purpose == "signup":
                 if db.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
@@ -101,8 +109,55 @@ class AuthService:
                     "인증번호 재발송 대기 시간이 지나지 않았습니다.",
                     **{"Retry-After": str(remaining)},
                 )
-            code = f"{secrets.randbelow(1_000_000):06d}"
-            digest = hash_code(self.settings.auth_secret, email, purpose, user_id, code)
+            pending = db.execute(
+                "SELECT expires_at FROM email_deliveries WHERE email = ? AND purpose = ?",
+                (email, purpose),
+            ).fetchone()
+            if pending:
+                raise failure(
+                    429,
+                    "인증번호를 발송 중입니다. 잠시 후 다시 시도해 주세요.",
+                    **{"Retry-After": str(pending["expires_at"] - now)},
+                )
+            db.execute(
+                "INSERT INTO email_deliveries VALUES (?, ?, ?, ?, ?)",
+                (email, purpose, user_id, reservation_id, now + reservation_ttl),
+            )
+
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        digest = hash_code(self.settings.auth_secret, email, purpose, user_id, code)
+        try:
+            self.mailer.send(
+                email,
+                f"[ParkingPot] {PURPOSE_LABELS[purpose]} 인증번호",
+                f"인증번호: {code}\n"
+                f"유효 시간: {self.settings.code_ttl_seconds}초\n"
+                "요청하지 않았다면 이 메일을 무시해 주세요.\n",
+            )
+        except (OSError, smtplib.SMTPException):
+            # Never log SMTP exceptions: a provider may include recipient data or credentials.
+            logger.warning("Verification email delivery failed")
+            with self.database.connect(write=True) as db:
+                db.execute(
+                    "DELETE FROM email_deliveries WHERE email = ? AND purpose = ? "
+                    "AND reservation_id = ?",
+                    (email, purpose, reservation_id),
+                )
+            raise failure(
+                503, "이메일을 발송하지 못했습니다. 잠시 후 다시 시도해 주세요."
+            ) from None
+
+        with self.database.connect(write=True) as db:
+            reservation = db.execute(
+                "DELETE FROM email_deliveries WHERE email = ? AND purpose = ? "
+                "AND reservation_id = ?",
+                (email, purpose, reservation_id),
+            )
+            if not reservation.rowcount:
+                raise failure(
+                    409, "인증 요청 상태가 변경되었습니다. 인증번호를 다시 요청해 주세요."
+                )
+            sent_at = int(self.now())
             db.execute(
                 "INSERT INTO email_verifications "
                 "(email, purpose, user_id, code_hash, expires_at, sent_at, attempts) "
@@ -110,22 +165,15 @@ class AuthService:
                 "ON CONFLICT(email, purpose) DO UPDATE SET user_id = excluded.user_id, "
                 "code_hash = excluded.code_hash, expires_at = excluded.expires_at, "
                 "sent_at = excluded.sent_at, attempts = 0",
-                (email, purpose, user_id, digest, now + self.settings.code_ttl_seconds, now),
-            )
-            try:
-                self.mailer.send(
+                (
                     email,
-                    f"[ParkingPot] {PURPOSE_LABELS[purpose]} 인증번호",
-                    f"인증번호: {code}\n"
-                    f"유효 시간: {self.settings.code_ttl_seconds}초\n"
-                    "요청하지 않았다면 이 메일을 무시해 주세요.\n",
-                )
-            except (OSError, smtplib.SMTPException):
-                # Never log SMTP exceptions: a provider may include recipient data or credentials.
-                logger.warning("Verification email delivery failed")
-                raise failure(
-                    503, "이메일을 발송하지 못했습니다. 잠시 후 다시 시도해 주세요."
-                ) from None
+                    purpose,
+                    user_id,
+                    digest,
+                    sent_at + self.settings.code_ttl_seconds,
+                    sent_at,
+                ),
+            )
 
     def check_code(self, db, email: str, purpose: str, user_id: str | None, code: str | None):
         """Return an error so failed-attempt increments can commit before raising it."""
@@ -154,6 +202,7 @@ class AuthService:
         db.execute(
             "DELETE FROM email_verifications WHERE email = ? AND purpose = ?", (email, purpose)
         )
+        db.execute("DELETE FROM email_deliveries WHERE email = ? AND purpose = ?", (email, purpose))
 
     def signup(self, data: SignupRequest, ip: str):
         self.rate_limit(f"signup:ip:{ip}", 20, 600)
@@ -258,6 +307,7 @@ class AuthService:
                     # Revoke every device and every outstanding account-bound code.
                     db.execute("DELETE FROM sessions WHERE user_id = ?", (user["id"],))
                     db.execute("DELETE FROM email_verifications WHERE user_id = ?", (user["id"],))
+                    db.execute("DELETE FROM email_deliveries WHERE user_id = ?", (user["id"],))
                     # A signup challenge issued before this address was adopted is now stale.
                     self.consume_code(db, email, "signup")
         if error:

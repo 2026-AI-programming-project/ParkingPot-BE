@@ -329,9 +329,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Realtime Health Health Realtime Get"
+                  "$ref": "#/components/schemas/RealtimeHealth"
                 }
               }
             }
@@ -349,9 +347,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Create Anonymous Session Sessions Anonymous Post"
+                  "$ref": "#/components/schemas/AnonymousSession"
                 }
               }
             }
@@ -526,9 +522,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response List Parking Lots Parking Lots Get"
+                  "$ref": "#/components/schemas/ParkingSearchResult"
                 }
               }
             }
@@ -567,9 +561,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Parking Lot Detail Parking Lots  Parking Id  Get"
+                  "$ref": "#/components/schemas/ParkingLot"
                 }
               }
             }
@@ -693,9 +685,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Parking Lot Congestion Parking Lots  Parking Id  Congestion Get"
+                  "$ref": "#/components/schemas/ParkingCongestion"
                 }
               }
             }
@@ -741,9 +731,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response List Favorites Favorites Get"
+                  "$ref": "#/components/schemas/FavoriteList"
                 }
               }
             }
@@ -798,9 +786,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Add Favorite Favorites  Parking Id  Put"
+                  "$ref": "#/components/schemas/FavoriteResult"
                 }
               }
             }
@@ -853,9 +839,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Remove Favorite Favorites  Parking Id  Delete"
+                  "$ref": "#/components/schemas/FavoriteResult"
                 }
               }
             }
@@ -920,9 +904,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Rate Parking Lot Parking Lots  Parking Id  Rating Put"
+                  "$ref": "#/components/schemas/ParkingRating"
                 }
               }
             }
@@ -1040,6 +1022,25 @@
   },
   "components": {
     "schemas": {
+      "AnonymousSession": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "title": "Access Token"
+          },
+          "token_type": {
+            "type": "string",
+            "const": "bearer",
+            "title": "Token Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "access_token",
+          "token_type"
+        ],
+        "title": "AnonymousSession"
+      },
       "EmailCodeRequest": {
         "properties": {
           "email": {
@@ -1087,6 +1088,40 @@
           "resend_after"
         ],
         "title": "EmailCodeResponse"
+      },
+      "FavoriteList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ParkingLot"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "FavoriteList"
+      },
+      "FavoriteResult": {
+        "properties": {
+          "parking_id": {
+            "type": "string",
+            "title": "Parking Id"
+          },
+          "favorite": {
+            "type": "boolean",
+            "title": "Favorite"
+          }
+        },
+        "type": "object",
+        "required": [
+          "parking_id",
+          "favorite"
+        ],
+        "title": "FavoriteResult"
       },
       "HTTPValidationError": {
         "properties": {
@@ -1169,6 +1204,85 @@
         ],
         "title": "MessageResponse"
       },
+      "ParkingCongestion": {
+        "properties": {
+          "level": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "available",
+              "moderate",
+              "busy"
+            ],
+            "title": "Level"
+          },
+          "color": {
+            "type": "string",
+            "enum": [
+              "gray",
+              "green",
+              "yellow",
+              "red"
+            ],
+            "title": "Color"
+          },
+          "available_percent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available Percent",
+            "description": "최신 실시간 데이터가 없으면 null"
+          },
+          "available_spaces": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available Spaces"
+          },
+          "total_spaces": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Spaces"
+          },
+          "fetched_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fetched At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "level",
+          "color",
+          "available_percent",
+          "available_spaces",
+          "total_spaces",
+          "fetched_at"
+        ],
+        "title": "ParkingCongestion"
+      },
       "ParkingDestination": {
         "properties": {
           "name": {
@@ -1227,6 +1341,447 @@
           "web_url"
         ],
         "title": "ParkingDirections"
+      },
+      "ParkingHours": {
+        "properties": {
+          "open": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open"
+          },
+          "close": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close"
+          }
+        },
+        "type": "object",
+        "required": [
+          "open",
+          "close"
+        ],
+        "title": "ParkingHours"
+      },
+      "ParkingLot": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "address": {
+            "type": "string",
+            "title": "Address"
+          },
+          "latitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latitude"
+          },
+          "longitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Longitude"
+          },
+          "fee_type": {
+            "type": "string",
+            "enum": [
+              "free",
+              "paid",
+              "mixed",
+              "unknown"
+            ],
+            "title": "Fee Type"
+          },
+          "keywords": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Keywords"
+          },
+          "fee_description": {
+            "type": "string",
+            "title": "Fee Description"
+          },
+          "hourly_price": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hourly Price",
+            "description": "시간당 요금(원). 알 수 없으면 null"
+          },
+          "accessible": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accessible"
+          },
+          "total_spaces": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Spaces"
+          },
+          "operating_days": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operating Days"
+          },
+          "opening_hours": {
+            "$ref": "#/components/schemas/ParkingOpeningHours"
+          },
+          "rating": {
+            "$ref": "#/components/schemas/ParkingRating"
+          },
+          "reference_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Date"
+          },
+          "distance_m": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Distance M",
+            "description": "검색에 출발 좌표가 없으면 null"
+          },
+          "congestion": {
+            "$ref": "#/components/schemas/ParkingCongestion"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "address",
+          "latitude",
+          "longitude",
+          "fee_type",
+          "keywords",
+          "fee_description",
+          "hourly_price",
+          "accessible",
+          "total_spaces",
+          "operating_days",
+          "opening_hours",
+          "rating",
+          "reference_date",
+          "distance_m",
+          "congestion"
+        ],
+        "title": "ParkingLot"
+      },
+      "ParkingOpeningHours": {
+        "properties": {
+          "weekday": {
+            "$ref": "#/components/schemas/ParkingHours"
+          },
+          "saturday": {
+            "$ref": "#/components/schemas/ParkingHours"
+          },
+          "holiday": {
+            "$ref": "#/components/schemas/ParkingHours"
+          }
+        },
+        "type": "object",
+        "required": [
+          "weekday",
+          "saturday",
+          "holiday"
+        ],
+        "title": "ParkingOpeningHours"
+      },
+      "ParkingRating": {
+        "properties": {
+          "average": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average",
+            "description": "등록된 별점이 없으면 null"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "average",
+          "count"
+        ],
+        "title": "ParkingRating"
+      },
+      "ParkingSearchItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "address": {
+            "type": "string",
+            "title": "Address"
+          },
+          "latitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latitude"
+          },
+          "longitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Longitude"
+          },
+          "fee_type": {
+            "type": "string",
+            "enum": [
+              "free",
+              "paid",
+              "mixed",
+              "unknown"
+            ],
+            "title": "Fee Type"
+          },
+          "keywords": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Keywords"
+          },
+          "fee_description": {
+            "type": "string",
+            "title": "Fee Description"
+          },
+          "hourly_price": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hourly Price",
+            "description": "시간당 요금(원). 알 수 없으면 null"
+          },
+          "accessible": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accessible"
+          },
+          "total_spaces": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Spaces"
+          },
+          "operating_days": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operating Days"
+          },
+          "opening_hours": {
+            "$ref": "#/components/schemas/ParkingOpeningHours"
+          },
+          "rating": {
+            "$ref": "#/components/schemas/ParkingRating"
+          },
+          "reference_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Date"
+          },
+          "distance_m": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Distance M",
+            "description": "검색에 출발 좌표가 없으면 null"
+          },
+          "congestion": {
+            "$ref": "#/components/schemas/ParkingCongestion"
+          },
+          "is_nearest": {
+            "type": "boolean",
+            "title": "Is Nearest"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "address",
+          "latitude",
+          "longitude",
+          "fee_type",
+          "keywords",
+          "fee_description",
+          "hourly_price",
+          "accessible",
+          "total_spaces",
+          "operating_days",
+          "opening_hours",
+          "rating",
+          "reference_date",
+          "distance_m",
+          "congestion",
+          "is_nearest"
+        ],
+        "title": "ParkingSearchItem"
+      },
+      "ParkingSearchResult": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ParkingSearchItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "page_size": {
+            "type": "integer",
+            "title": "Page Size"
+          },
+          "nearest_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nearest Id",
+            "description": "필터 결과 전체에서 가장 가까운 주차장 ID"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size",
+          "nearest_id"
+        ],
+        "title": "ParkingSearchResult"
       },
       "PasswordVerifyRequest": {
         "properties": {
@@ -1362,6 +1917,56 @@
           "score"
         ],
         "title": "RatingInput"
+      },
+      "RealtimeHealth": {
+        "properties": {
+          "last_fetched_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Fetched At"
+          },
+          "total_lots": {
+            "type": "integer",
+            "title": "Total Lots"
+          },
+          "linked_lots": {
+            "type": "integer",
+            "title": "Linked Lots"
+          },
+          "source_statuses": {
+            "type": "integer",
+            "title": "Source Statuses"
+          },
+          "source_statuses_with_facility": {
+            "type": "integer",
+            "title": "Source Statuses With Facility"
+          },
+          "fresh_linked_lots": {
+            "type": "integer",
+            "title": "Fresh Linked Lots"
+          },
+          "refresh_interval_seconds": {
+            "type": "integer",
+            "title": "Refresh Interval Seconds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "last_fetched_at",
+          "total_lots",
+          "linked_lots",
+          "source_statuses",
+          "source_statuses_with_facility",
+          "fresh_linked_lots",
+          "refresh_interval_seconds"
+        ],
+        "title": "RealtimeHealth"
       },
       "Review": {
         "properties": {

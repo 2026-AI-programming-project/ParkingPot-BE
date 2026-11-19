@@ -2,7 +2,7 @@
 
 import hashlib
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
@@ -15,8 +15,24 @@ from app.parking import (
     search_lots,
 )
 from app.parking_db import connect
+from app.parking_schemas import (
+    AnonymousSession,
+    FavoriteList,
+    FavoriteResult,
+    ParkingCongestion,
+    ParkingLot,
+    ParkingRating,
+    ParkingSearchResult,
+    RealtimeHealth,
+)
 
 router = APIRouter()
+
+# Keep the only credentials to saved items and the original votes usable across upgrades.
+EMPTY_SESSION = """
+    NOT EXISTS (SELECT 1 FROM favorites WHERE favorites.token_hash = sessions.token_hash)
+    AND NOT EXISTS (SELECT 1 FROM ratings WHERE ratings.token_hash = sessions.token_hash)
+"""
 
 
 class RatingInput(BaseModel):
@@ -53,15 +69,19 @@ def _session_hash(authorization: str | None = Header(default=None)) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def _require_session(connection, token_hash: str) -> None:
-    if (
-        connection.execute("SELECT 1 FROM sessions WHERE token_hash = ?", (token_hash,)).fetchone()
-        is None
-    ):
+def _require_session(connection, token_hash: str, idle_days: int) -> None:
+    now = datetime.now(UTC)
+    cutoff = (now - timedelta(days=idle_days)).isoformat() if idle_days else None
+    updated = connection.execute(
+        f"""UPDATE sessions SET last_seen_at = ?
+            WHERE token_hash = ? AND (? IS NULL OR last_seen_at > ? OR NOT ({EMPTY_SESSION}))""",
+        (now.isoformat(), token_hash, cutoff, cutoff),
+    )
+    if not updated.rowcount:
         raise HTTPException(status_code=401, detail="유효하지 않은 토큰입니다")
 
 
-@router.get("/health/realtime")
+@router.get("/health/realtime", response_model=RealtimeHealth)
 def realtime_health(request: Request) -> dict:
     cutoff = (datetime.now(UTC) - REALTIME_STATUS_MAX_AGE).isoformat()
     with connect(_settings(request)) as connection:
@@ -90,19 +110,29 @@ def realtime_health(request: Request) -> dict:
     }
 
 
-@router.post("/sessions/anonymous", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/sessions/anonymous", response_model=AnonymousSession, status_code=status.HTTP_201_CREATED
+)
 def create_anonymous_session(request: Request) -> dict:
     token = secrets.token_hex(32)
     token_hash = hashlib.sha256(token.encode()).hexdigest()
-    with connect(_settings(request)) as connection:
+    settings = _settings(request)
+    now = datetime.now(UTC)
+    with connect(settings, write=True) as connection:
+        if settings.anonymous_idle_days:
+            cutoff = (now - timedelta(days=settings.anonymous_idle_days)).isoformat()
+            connection.execute(
+                f"DELETE FROM sessions WHERE last_seen_at <= ? AND {EMPTY_SESSION}",
+                (cutoff,),
+            )
         connection.execute(
-            "INSERT INTO sessions(token_hash, created_at) VALUES (?, ?)",
-            (token_hash, datetime.now(UTC).isoformat()),
+            "INSERT INTO sessions(token_hash, created_at, last_seen_at) VALUES (?, ?, ?)",
+            (token_hash, now.isoformat(), now.isoformat()),
         )
     return {"access_token": token, "token_type": "bearer"}
 
 
-@router.get("/parking-lots")
+@router.get("/parking-lots", response_model=ParkingSearchResult)
 def list_parking_lots(
     request: Request,
     name: str | None = Query(default=None, max_length=100),
@@ -136,7 +166,7 @@ def list_parking_lots(
         )
 
 
-@router.get("/parking-lots/{parking_id}")
+@router.get("/parking-lots/{parking_id}", response_model=ParkingLot)
 def parking_lot_detail(parking_id: str, request: Request) -> dict:
     with connect(_settings(request)) as connection:
         lot = get_lot(connection, parking_id)
@@ -187,16 +217,17 @@ def parking_lot_directions(
     )
 
 
-@router.get("/parking-lots/{parking_id}/congestion")
+@router.get("/parking-lots/{parking_id}/congestion", response_model=ParkingCongestion)
 def parking_lot_congestion(parking_id: str, request: Request) -> dict:
     lot = parking_lot_detail(parking_id, request)
     return lot["congestion"]
 
 
-@router.get("/favorites")
+@router.get("/favorites", response_model=FavoriteList)
 def list_favorites(request: Request, token_hash: str = Depends(_session_hash)) -> dict:
-    with connect(_settings(request)) as connection:
-        _require_session(connection, token_hash)
+    settings = _settings(request)
+    with connect(settings, write=True) as connection:
+        _require_session(connection, token_hash, settings.anonymous_idle_days)
         ids = connection.execute(
             "SELECT parking_id FROM favorites WHERE token_hash = ? ORDER BY parking_id",
             (token_hash,),
@@ -205,12 +236,13 @@ def list_favorites(request: Request, token_hash: str = Depends(_session_hash)) -
     return {"items": items}
 
 
-@router.put("/favorites/{parking_id}")
+@router.put("/favorites/{parking_id}", response_model=FavoriteResult)
 def add_favorite(
     parking_id: str, request: Request, token_hash: str = Depends(_session_hash)
 ) -> dict:
-    with connect(_settings(request)) as connection:
-        _require_session(connection, token_hash)
+    settings = _settings(request)
+    with connect(settings, write=True) as connection:
+        _require_session(connection, token_hash, settings.anonymous_idle_days)
         if get_lot(connection, parking_id) is None:
             raise HTTPException(status_code=404, detail="주차장을 찾을 수 없습니다")
         connection.execute(
@@ -220,12 +252,13 @@ def add_favorite(
     return {"parking_id": parking_id, "favorite": True}
 
 
-@router.delete("/favorites/{parking_id}")
+@router.delete("/favorites/{parking_id}", response_model=FavoriteResult)
 def remove_favorite(
     parking_id: str, request: Request, token_hash: str = Depends(_session_hash)
 ) -> dict:
-    with connect(_settings(request)) as connection:
-        _require_session(connection, token_hash)
+    settings = _settings(request)
+    with connect(settings, write=True) as connection:
+        _require_session(connection, token_hash, settings.anonymous_idle_days)
         connection.execute(
             "DELETE FROM favorites WHERE token_hash = ? AND parking_id = ?",
             (token_hash, parking_id),
@@ -233,15 +266,16 @@ def remove_favorite(
     return {"parking_id": parking_id, "favorite": False}
 
 
-@router.put("/parking-lots/{parking_id}/rating")
+@router.put("/parking-lots/{parking_id}/rating", response_model=ParkingRating)
 def rate_parking_lot(
     parking_id: str,
     body: RatingInput,
     request: Request,
     token_hash: str = Depends(_session_hash),
 ) -> dict:
-    with connect(_settings(request)) as connection:
-        _require_session(connection, token_hash)
+    settings = _settings(request)
+    with connect(settings, write=True) as connection:
+        _require_session(connection, token_hash, settings.anonymous_idle_days)
         if get_lot(connection, parking_id) is None:
             raise HTTPException(status_code=404, detail="주차장을 찾을 수 없습니다")
         connection.execute(

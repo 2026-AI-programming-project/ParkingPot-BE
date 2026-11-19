@@ -17,6 +17,14 @@ class Settings:
     realtime_refresh_seconds: int = 120
     realtime_sido_code: str | None = None
     realtime_sigungu_code: str | None = None
+    realtime_mode: str = "embedded"
+    anonymous_idle_days: int = 0
+
+    def __post_init__(self) -> None:
+        if self.realtime_mode not in {"embedded", "worker"}:
+            raise ValueError("PARKING_REALTIME_MODE must be embedded or worker")
+        if self.anonymous_idle_days < 0:
+            raise ValueError("PARKING_ANONYMOUS_IDLE_DAYS cannot be negative")
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -31,4 +39,8 @@ class Settings:
             realtime_refresh_seconds=int(os.getenv("PARKING_REALTIME_REFRESH_SECONDS", "120")),
             realtime_sido_code=os.getenv("PARKING_REALTIME_SIDO_CODE") or None,
             realtime_sigungu_code=os.getenv("PARKING_REALTIME_SIGUNGU_CODE") or None,
+            realtime_mode=os.getenv("PARKING_REALTIME_MODE", cls.realtime_mode),
+            anonymous_idle_days=int(
+                os.getenv("PARKING_ANONYMOUS_IDLE_DAYS", str(cls.anonymous_idle_days))
+            ),
         )

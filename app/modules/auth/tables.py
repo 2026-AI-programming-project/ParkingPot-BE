@@ -23,6 +23,17 @@ CREATE TABLE IF NOT EXISTS email_verifications (
     attempts INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (email, purpose)
 );
+CREATE INDEX IF NOT EXISTS email_verifications_expires_at ON email_verifications(expires_at);
+CREATE TABLE IF NOT EXISTS email_deliveries (
+    email TEXT NOT NULL,
+    purpose TEXT NOT NULL,
+    user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    reservation_id TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    PRIMARY KEY (email, purpose)
+);
+CREATE INDEX IF NOT EXISTS email_deliveries_user_id ON email_deliveries(user_id);
+CREATE INDEX IF NOT EXISTS email_deliveries_expires_at ON email_deliveries(expires_at);
 CREATE TABLE IF NOT EXISTS rate_limits (
     bucket TEXT PRIMARY KEY,
     count INTEGER NOT NULL,
