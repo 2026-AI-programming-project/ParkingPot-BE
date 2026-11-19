@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS parking_reviews (
 );
 CREATE INDEX IF NOT EXISTS idx_parking_reviews_lot_created
     ON parking_reviews(parking_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_parking_reviews_user ON parking_reviews(user_id);
 """
 
 

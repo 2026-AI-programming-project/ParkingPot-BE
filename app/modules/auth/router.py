@@ -20,6 +20,7 @@ from app.modules.auth.schemas import (
     SignupResponse,
     UserResponse,
 )
+from app.modules.reviews.service import anonymize_user_reviews
 
 router = APIRouter()
 
@@ -112,6 +113,7 @@ def update_me(data: ProfileUpdateRequest, service: AuthServiceDep, user: Current
 
 
 @router.delete("/users/me", response_model=MessageResponse, tags=["마이페이지"], summary="회원탈퇴")
-def delete_me(service: AuthServiceDep, user: CurrentUser):
+def delete_me(request: Request, service: AuthServiceDep, user: CurrentUser):
     service.delete_account(user)
+    anonymize_user_reviews(request.app.state.settings, user["id"])
     return {"message": "회원 탈퇴가 완료되었습니다"}

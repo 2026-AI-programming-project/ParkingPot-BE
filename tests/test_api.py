@@ -1,4 +1,5 @@
-from datetime import UTC, datetime
+import hashlib
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from fastapi.testclient import TestClient
@@ -124,6 +125,80 @@ def test_search_nearby_congestion_favorites_and_ratings(tmp_path):
         assert client.delete("/favorites/A", headers=headers).status_code == 200
         assert client.get("/favorites", headers=headers).json()["items"] == []
         assert client.get("/favorites").status_code == 401
+
+
+def test_parking_openapi_describes_the_response_contract(tmp_path):
+    settings = Settings(database_path=str(tmp_path / "test.db"))
+    spec = create_app(parking_settings=settings).openapi()
+    paths = spec["paths"]
+    models = spec["components"]["schemas"]
+    endpoints = {
+        ("/parking-lots", "get"): "ParkingSearchResult",
+        ("/parking-lots/{parking_id}", "get"): "ParkingLot",
+        ("/parking-lots/{parking_id}/congestion", "get"): "ParkingCongestion",
+        ("/parking-lots/{parking_id}/rating", "put"): "ParkingRating",
+        ("/favorites", "get"): "FavoriteList",
+    }
+    for (path, method), model in endpoints.items():
+        schema = paths[path][method]["responses"]["200"]["content"]["application/json"]["schema"]
+        assert schema["$ref"] == f"#/components/schemas/{model}"
+    search_item = models["ParkingSearchItem"]["properties"]
+    assert search_item["is_nearest"]["type"] == "boolean"
+    assert search_item["opening_hours"]["$ref"].endswith("/ParkingOpeningHours")
+    assert "is_nearest" not in models["ParkingLot"]["properties"]
+
+
+def test_anonymous_session_upgrade_and_expiry_preserves_saved_data(tmp_path):
+    settings = Settings(database_path=str(tmp_path / "legacy.db"), anonymous_idle_days=90)
+    token = "a" * 64
+    old = (datetime.now(UTC) - timedelta(days=settings.anonymous_idle_days + 1)).isoformat()
+    empty_hash = hashlib.sha256(token.encode()).hexdigest()
+    with connect(settings) as db:
+        db.execute("CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, created_at TEXT NOT NULL)")
+        db.execute("INSERT INTO sessions VALUES (?, ?)", (empty_hash, old))
+
+    with TestClient(create_app(parking_settings=settings)) as client:
+        empty = {"Authorization": f"Bearer {token}"}
+        assert client.get("/favorites", headers=empty).json() == {"items": []}
+        with connect(settings) as db:
+            db.execute("INSERT INTO parking_lots (id, name) VALUES ('A', '주차장')")
+
+        def new_session():
+            token = client.post("/sessions/anonymous").json()["access_token"]
+            return {"Authorization": f"Bearer {token}"}
+
+        favorite = new_session()
+        rated = new_session()
+        assert client.put("/favorites/A", headers=favorite).status_code == 200
+        assert (
+            client.put("/parking-lots/A/rating", json={"score": 4}, headers=rated).status_code
+            == 200
+        )
+
+        with connect(settings) as db:
+            db.execute("UPDATE sessions SET last_seen_at = ?", (old,))
+        assert client.get("/favorites", headers=empty).status_code == 401
+        new_session()  # Issuing a token cleans up empty, expired sessions.
+        with connect(settings) as db:
+            assert db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 3
+            assert (
+                db.execute("SELECT 1 FROM sessions WHERE token_hash = ?", (empty_hash,)).fetchone()
+                is None
+            )
+        assert client.get("/favorites", headers=favorite).json()["items"][0]["id"] == "A"
+        assert client.get("/favorites", headers=rated).status_code == 200
+        assert client.get("/parking-lots/A").json()["rating"] == {"average": 4.0, "count": 1}
+
+
+def test_anonymous_sessions_remain_usable_by_default(tmp_path):
+    settings = Settings(database_path=str(tmp_path / "test.db"))
+    with TestClient(create_app(parking_settings=settings)) as client:
+        token = client.post("/sessions/anonymous").json()["access_token"]
+        with connect(settings) as db:
+            db.execute("UPDATE sessions SET last_seen_at = '2020-01-01T00:00:00+00:00'")
+        assert client.post("/sessions/anonymous").status_code == 201
+        headers = {"Authorization": f"Bearer {token}"}
+        assert client.get("/favorites", headers=headers).json() == {"items": []}
 
 
 def test_directions_use_selected_parking_lot_and_optional_origin(tmp_path):

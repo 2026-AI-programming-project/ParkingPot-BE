@@ -15,7 +15,8 @@ router = APIRouter()
     tags=["주차장 리뷰"],
 )
 def get_reviews(parking_id: str, request: Request) -> dict:
-    return list_reviews(request.app.state.settings, parking_id)
+    state = request.app.state
+    return list_reviews(state.settings, state.database, parking_id)
 
 
 @router.post(
@@ -25,4 +26,5 @@ def get_reviews(parking_id: str, request: Request) -> dict:
     tags=["주차장 리뷰"],
 )
 def post_review(parking_id: str, body: ReviewInput, request: Request, user: CurrentUser) -> dict:
-    return create_review(request.app.state.settings, parking_id, user, body.content)
+    state = request.app.state
+    return create_review(state.settings, state.database, parking_id, user, body.content)

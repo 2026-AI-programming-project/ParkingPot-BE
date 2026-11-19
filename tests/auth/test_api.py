@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
 import pytest
 
@@ -356,6 +357,43 @@ def test_delivery_failure_rolls_back_new_challenge(client, code, service, settin
     )
     assert latest_code(settings.mail_outbox_dir) == valid
     assert client.post("/api/auth/signup", json=signup_body(valid)).status_code == 201
+
+
+def test_mail_delivery_allows_other_auth_writes_and_blocks_duplicate_sends(
+    client, signup, service, monkeypatch
+):
+    signup()
+    entered = Event()
+    release = Event()
+    original_send = service.mailer.send
+
+    def slow_mail(*args):
+        entered.set()
+        assert release.wait(10)
+        original_send(*args)
+
+    monkeypatch.setattr(service.mailer, "send", slow_mail)
+    payload = {"email": "next-driver@example.com"}
+
+    def send_code():
+        return client.post("/api/auth/email-verifications", json=payload)
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        pending = pool.submit(send_code)
+        try:
+            assert entered.wait(5)
+            duplicate = pool.submit(send_code).result(timeout=5)
+            login = pool.submit(
+                client.post,
+                "/api/auth/login",
+                json={"email": "driver@example.com", "password": PASSWORD},
+            ).result(timeout=5)
+            assert duplicate.status_code == 429
+            assert duplicate.headers["Retry-After"]
+            assert login.status_code == 200
+        finally:
+            release.set()
+        assert pending.result(timeout=5).status_code == 202
 
 
 def test_openapi_and_cors(client):
