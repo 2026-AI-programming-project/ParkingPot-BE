@@ -11,6 +11,7 @@ class Settings:
     database_path: str = "parking.db"
     catalog_service_key: str = ""
     status_service_key: str = ""
+    kakao_rest_api_key: str = ""
     catalog_url: str = "https://api.data.go.kr/openapi/tn_pubr_prkplce_info_api"
     facility_url: str = "https://apis.data.go.kr/B553881/Parking_v1/PrkSttusInfo_v1"
     realtime_url: str = "https://apis.data.go.kr/B553881/Parking_v1/PrkRealtimeInfo_v1"
@@ -33,6 +34,7 @@ class Settings:
             database_path=os.getenv("PARKING_DB_PATH", "parking.db"),
             catalog_service_key=os.getenv("PARKING_CATALOG_SERVICE_KEY", ""),
             status_service_key=os.getenv("PARKING_STATUS_SERVICE_KEY", ""),
+            kakao_rest_api_key=os.getenv("KAKAO_REST_API_KEY", ""),
             catalog_url=os.getenv("PARKING_CATALOG_URL", cls.catalog_url),
             facility_url=os.getenv("PARKING_FACILITY_URL", cls.facility_url),
             realtime_url=os.getenv("PARKING_REALTIME_URL", cls.realtime_url),

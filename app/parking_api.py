@@ -15,6 +15,7 @@ from app.parking import (
     search_lots,
 )
 from app.parking_db import connect
+from app.geocoding import resolve_location
 from app.parking_schemas import (
     AnonymousSession,
     FavoriteList,
@@ -141,7 +142,7 @@ def list_parking_lots(
     accessible: bool | None = None,
     lat: float | None = Query(default=None, ge=-90, le=90),
     lon: float | None = Query(default=None, ge=-180, le=180),
-    radius_m: int = Query(default=3000, ge=100, le=20000),
+    radius_m: int = Query(default=500, ge=100, le=20000),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     sort: str | None = Query(default=None, pattern="^(name|price|rating|distance)$"),
@@ -164,6 +165,36 @@ def list_parking_lots(
             page_size=page_size,
             sort=sort or ("distance" if lat is not None else "name"),
         )
+
+
+@router.get("/parking-lots/nearby", response_model=ParkingSearchResult)
+def nearby_parking_lots(
+    request: Request,
+    address: str = Query(min_length=1, max_length=150),
+    radius_m: int = Query(default=500, ge=100, le=20000),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+) -> dict:
+    """Geocode an address, then return parking lots within the requested radius."""
+    latitude, longitude = resolve_location(
+        address.strip(), _settings(request).kakao_rest_api_key
+    )
+    with connect(_settings(request)) as connection:
+        result = search_lots(
+            connection,
+            name=None,
+            address=None,
+            fee=None,
+            accessible=None,
+            latitude=latitude,
+            longitude=longitude,
+            radius_m=radius_m,
+            page=page,
+            page_size=page_size,
+            sort="distance",
+        )
+    result["search_center"] = {"latitude": latitude, "longitude": longitude}
+    return result
 
 
 @router.get("/parking-lots/{parking_id}", response_model=ParkingLot)

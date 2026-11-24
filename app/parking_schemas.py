@@ -54,12 +54,18 @@ class ParkingSearchItem(ParkingLot):
     is_nearest: bool
 
 
+class SearchCenter(BaseModel):
+    latitude: float
+    longitude: float
+
+
 class ParkingSearchResult(BaseModel):
     items: list[ParkingSearchItem]
     total: int
     page: int
     page_size: int
     nearest_id: str | None = Field(description="필터 결과 전체에서 가장 가까운 주차장 ID")
+    search_center: SearchCenter | None = None
 
 
 class FavoriteList(BaseModel):
