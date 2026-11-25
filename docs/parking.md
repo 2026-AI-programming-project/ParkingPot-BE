@@ -25,7 +25,23 @@ API 문서는 `http://127.0.0.1:8000/docs`에서 볼 수 있습니다. 처음 �
 
 전국 시설정보는 약 170만 건이며 실제 조회에서 깊은 페이지가 반복 시간 초과됐습니다. 그래서 시설정보를 포함한 명령에는 지역코드가 필요합니다. 기본정보를 이미 가져왔다면 `.venv\Scripts\python -m app.sync --kind facility --sido-code 11 --sigungu-code 11110` 다음에 `.venv\Scripts\python -m app.sync --kind realtime --sido-code 11 --sigungu-code 11110`을 실행하세요. 다른 지역은 코드를 바꾸면 됩니다. 전국 시설정보를 꼭 시도하려면 `--allow-nationwide-facility`를 명시해야 하며 시간 초과 가능성이 있습니다. 기존 전국 조회의 이어받기 위치는 지역별 조회와 별도로 보존됩니다. 운영 시에는 기본정보를 정기적으로, 실시간 정보는 별도 주기로 갱신해야 합니다. 실시간 응답은 가져온 지 10분이 지나면 `unknown`으로 표시됩니다.
 
-API 서버는 `PARKING_STATUS_SERVICE_KEY`가 설정되어 있으면 시작할 때 실시간정보를 가져오고 이후 `PARKING_REALTIME_REFRESH_SECONDS`(기본 120초)마다 갱신합니다. **서버가 꺼져 있으면 갱신도 멈춥니다.** 즉시 한 번 갱신하려면 `.venv\Scripts\python -m app.sync --kind realtime`을 실행하세요. `.env`에 `PARKING_REALTIME_SIDO_CODE`와 `PARKING_REALTIME_SIGUNGU_CODE`를 설정하면 해당 지역만 조회합니다. 시설정보도 같은 지역으로 동기화해야 주차장과 연결됩니다. `GET /health/realtime`에서 `refresh_running`(현재 서버의 갱신 작업 실행 여부), `source_statuses`(저장된 실시간 원천 건수), `source_statuses_with_facility`(시설정보가 있는 원천 건수), `linked_lots`(앱 주차장과 연결된 건수), `fresh_linked_lots`(최근 10분 내 갱신된 연결 건수), `fresh_mappable_facilities`(최근 10분 내 갱신됐고 좌표가 있어 지도에 표시할 수 있는 시설 수)를 확인할 수 있습니다. 원천 제공기관은 시설정보보다 실시간정보를 적게 제공하므로, 연결과 갱신이 정상이어도 일부 주차장은 `unknown`입니다.
+기본값인 `PARKING_REALTIME_MODE=embedded`에서는 `PARKING_STATUS_SERVICE_KEY`가 설정된 API 서버가
+시작할 때 실시간정보를 가져오고 이후 `PARKING_REALTIME_REFRESH_SECONDS`(기본 120초)마다 갱신합니다.
+동일한 주차장 DB를 사용하는 수집기는 OS 파일 잠금으로 한 프로세스에서만 실행됩니다.
+
+운영에서 API와 수집을 분리하려면 `.env`에 `PARKING_REALTIME_MODE=worker`를 설정하고,
+API와 같은 호스트 및 `PARKING_DB_PATH`를 사용하는 별도 프로세스에서 실행합니다.
+
+```powershell
+uv run python -m app.realtime
+```
+
+`PARKING_REALTIME_SIDO_CODE`와 `PARKING_REALTIME_SIGUNGU_CODE`를 설정하면 해당 지역만 조회합니다.
+시설정보도 같은 지역으로 동기화해야 주차장과 연결됩니다. `GET /health/realtime`의
+`last_fetched_at`, `linked_lots`, `fresh_linked_lots`, `fresh_mappable_facilities`, `refresh_running`을 확인해 갱신 지연과 연결 상태를 파악할 수
+있습니다. 원천 제공기관이 실시간정보를 제공하지 않는 주차장은 `unknown`으로 표시됩니다.
+서버가 꺼져 있고 별도 worker도 실행하지 않으면 갱신이 멈춥니다. 즉시 한 번 갱신하려면
+`.venv\Scripts\python -m app.sync --kind realtime`을 실행하세요.
 
 ## API
 
@@ -35,7 +51,7 @@ API 서버는 `PARKING_STATUS_SERVICE_KEY`가 설정되어 있으면 시작할 �
 | 상세                | `GET /parking-lots/{id}`                       | 요금, 1시간 예상 요금, 운영시간, 키워드, 별점, 혼잡도                                         |
 | 카카오맵 길찾기     | `GET /parking-lots/{id}/directions`            | 선택한 주차장 목적지 좌표와 `app_url`, `web_url`                                         |
 | 혼잡도              | `GET /parking-lots/{id}/congestion`            | 잔여면수 비율, 색상, 조회 시각                                                                |
-| 실시간 지도 표시    | `GET /realtime-parking-lots`                  | 좌표가 있는 실시간 시설의 이름·위치·혼잡도, `parking_id`는 기존 목록과 연결됐을 때만 제공     |
+| 실시간 지도 표시    | `GET /realtime-parking-lots`                   | 좌표가 있는 실시간 시설의 이름·위치·혼잡도, 연결된 경우 `parking_id` 제공                     |
 | 익명 세션 발급      | `POST /sessions/anonymous`                     | 즐겨찾기·별점용 Bearer 토큰                                                                   |
 | 즐겨찾기            | `GET /favorites`, `PUT/DELETE /favorites/{id}` | 세션별 주차장 목록·등록·해제                                                                  |
 | 별점                | `PUT /parking-lots/{id}/rating`                | `{"score": 1~5}`; 같은 세션은 기존 별점을 변경                                                |
@@ -44,11 +60,11 @@ API 서버는 `PARKING_STATUS_SERVICE_KEY`가 설정되어 있으면 시작할 �
 
 예: `GET /parking-lots?name=시청&lat=37.5665&lon=126.9780&radius_m=3000&fee=free&accessible=true&sort=distance`
 
-기본 `GET /parking-lots` 검색에는 기존 표준데이터 주차장과, 실시간정보가 있지만 표준데이터에 연결되지 않은 시설이 함께 나옵니다. 실시간 시설은 `id`가 `realtime:<제공기관 ID>`, `data_source`가 `realtime_facility`입니다. 확인되지 않은 주소는 빈 문자열, 요금·운영시간·별점은 미상 값으로 반환합니다. 실시간 정보가 10분 넘게 갱신되지 않아도 검색 결과에는 남지만 `congestion.level`은 `unknown`입니다. 이 시설은 상세·혼잡도·길찾기 조회를 지원하며 즐겨찾기와 별점 등록은 지원하지 않습니다. 주소·요금·장애인 구역 필터를 지정하면 해당 정보가 없는 실시간 시설은 제외됩니다.
+기본 검색에는 표준데이터 주차장과, 실시간정보가 있지만 표준데이터에 연결되지 않은 시설이 함께 나옵니다. 후자는 `id`가 `realtime:<제공기관 ID>`, `data_source`가 `realtime_facility`입니다. 확인되지 않은 주소는 빈 문자열, 요금·운영시간·별점은 미상 값으로 반환합니다. 실시간 정보가 10분 넘게 갱신되지 않아도 검색 결과에는 남지만 혼잡도는 `unknown`입니다. 상세·혼잡도·길찾기 조회를 지원하며 즐겨찾기와 별점 등록은 지원하지 않습니다. 주소·요금·장애인 구역 필터를 지정하면 해당 정보가 없는 실시간 시설은 제외됩니다.
 
 예: `GET /parking-lots?name=대전신세계&lat=36.39071180848634&lon=127.36220552572692&radius_m=3000&sort=distance`
 
-실시간 정보가 **지금 유효한 시설만** 지도에 표시하려면 `GET /realtime-parking-lots?lat=37.5665&lon=126.9780&radius_m=3000`을 호출합니다. 이 응답은 최근 10분 안에 가져온 데이터 중 유효한 좌표가 있는 시설만 포함합니다. 기본 `/parking-lots` 검색에도 이 시설이 포함되므로 두 응답을 합칠 때는 `source_id` 또는 `parking_id`를 기준으로 중복 마커를 제거하세요. 각 항목의 `source_id`는 제공기관 ID이고, `parking_id`가 `null`이면 표준데이터 주차장과 연결되지 않은 시설입니다. 지도에서 전체 시설을 조회할 때는 `page`와 `page_size`로 나누어 요청하세요.
+최근 10분 안에 가져온 실시간 시설만 지도에 표시하려면 `GET /realtime-parking-lots?lat=37.5665&lon=126.9780&radius_m=3000`을 호출합니다. 유효한 좌표가 있는 시설만 포함합니다. 기본 검색과 함께 사용하면 `source_id` 또는 `parking_id`를 기준으로 중복 마커를 제거하세요. `parking_id`가 `null`이면 표준데이터 주차장과 연결되지 않은 시설입니다. 전체 시설은 `page`와 `page_size`로 나누어 요청하세요.
 
 `fee`는 `free`, `paid`, `mixed` 중 하나입니다. `free`와 `paid` 필터에는 각각 `mixed` 주차장도 포함됩니다. `sort`는 `name`, `price`, `rating`, `distance`를 지원합니다. `distance`에는 `lat`와 `lon`이 필요합니다. 좌표가 있으면 기본 정렬은 거리순입니다. 목록 응답의 `nearest_id`, 각 항목의 `distance_m`·`is_nearest`를 지도 강조에 활용할 수 있습니다. 목적지 주소는 `address`로 검색하거나, 지도 서비스에서 주소를 좌표로 변환한 뒤 `lat`·`lon`으로 주변 조회할 수 있습니다. 지도 렌더링과 사용자 위치 취득은 프론트엔드 역할입니다.
 
@@ -58,7 +74,22 @@ API 서버는 `PARKING_STATUS_SERVICE_KEY`가 설정되어 있으면 시작할 �
 
 즐겨찾기와 별점 요청에는 `Authorization: Bearer <access_token>`이 필요합니다. 토큰은 `POST /sessions/anonymous`에서 발급하며, 잃어버리면 해당 익명 사용자의 즐겨찾기를 복구할 수 없습니다. 계정 로그인과 기기 간 동기화는 아직 지원하지 않습니다.
 
-리뷰 조회는 로그인 없이 가능하며, 응답의 각 항목은 `id`, `user_id`(회원 UUID), `user_nickname`, `content`, `created_at`(UTC ISO 8601)을 포함합니다. 리뷰 등록은 회원 로그인 토큰을 `Authorization: Bearer <access_token>`에 넣어야 합니다. 본문은 `{"content":"주차장 이용 경험을 작성해 주세요."}` 형식이며 공백만 입력한 댓글은 허용하지 않습니다. 성공하면 201과 `{"message":"댓글이 등록되었습니다.","review":...}`를 반환합니다. 댓글은 주차장 DB에 저장되고 주차장 삭제 시 함께 삭제됩니다.
+익명 세션 만료는 기본값 `PARKING_ANONYMOUS_IDLE_DAYS=0`에서 비활성화되어 있습니다. 클라이언트가
+만료된 토큰의 `401` 응답을 받고 새 토큰을 발급받을 수 있으면 양수(예: 90)를 설정할 수 있습니다.
+즐겨찾기와 별점이 모두 없는 세션만 마지막 사용일 기준으로 만료됩니다. 이전 버전에서 마지막 사용일을
+기록하지 않았던 토큰은 DB 업그레이드 시점부터 경과 시간을 계산합니다.
+
+리뷰 조회는 로그인 없이 가능하며, 응답의 각 항목은 `id`, `user_id`(회원 UUID),
+`user_nickname`, `content`, `created_at`(UTC ISO 8601)을 포함합니다. 리뷰 등록은 회원 로그인
+토큰과 `{"content":"주차장 이용 경험을 작성해 주세요."}` 형식의 본문이 필요합니다. 성공하면
+201과 `{"message":"댓글이 등록되었습니다.","review":...}`를 반환합니다. 회원이 탈퇴하면 리뷰 본문은
+남고, 작성자는 `탈퇴한 회원` 및 UUID `00000000-0000-0000-0000-000000000000`으로 표시됩니다.
+기존 리뷰를 유지하려면 운영에서 같은 회원 DB와 주차장 DB를 함께 사용하고 복원해야 합니다.
+주차장을 삭제하면 해당 주차장의 리뷰도 삭제됩니다.
+
+검색과 상세 응답의 필드와 타입은 [OpenAPI 명세](openapi.json)에 있습니다. 요금은 `hourly_price`,
+운영시간은 `opening_hours`, 평점은 `rating.average`와 `rating.count`, 혼잡도는
+`congestion.level`과 `congestion.color`로 읽습니다.
 
 ## 카카오맵 길찾기
 

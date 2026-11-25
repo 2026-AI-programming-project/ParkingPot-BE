@@ -12,6 +12,7 @@ data/
 *.db-shm
 *.db-wal
 *.sqlite3*
+*.realtime.lock
 *.egg-info/
 build/
 dist/

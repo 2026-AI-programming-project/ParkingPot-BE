@@ -16,6 +16,7 @@ from app.db.database import Database
 from app.modules.auth.service import AuthService
 from app.modules.auth.tables import AUTH_TABLES
 from app.modules.reviews.router import router as reviews_router
+from app.modules.reviews.service import anonymize_orphaned_reviews
 from app.modules.reviews.tables import init_db as init_reviews_db
 from app.parking_api import router as parking_router
 from app.parking_db import init_db as init_parking_db
@@ -47,10 +48,15 @@ def create_app(
         database.initialize(AUTH_TABLES)
         init_parking_db(parking_settings)
         init_reviews_db(parking_settings)
+        anonymize_orphaned_reviews(parking_settings, database)
         app.state.database = database
         app.state.auth_service = AuthService(settings, database)
         refresher = None
-        if parking_settings.status_service_key and parking_settings.realtime_refresh_seconds > 0:
+        if (
+            parking_settings.realtime_mode == "embedded"
+            and parking_settings.status_service_key
+            and parking_settings.realtime_refresh_seconds > 0
+        ):
             refresher = RealtimeRefresher(parking_settings)
             refresher.start()
         app.state.realtime_refresher = refresher

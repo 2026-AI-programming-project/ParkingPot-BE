@@ -11,7 +11,7 @@ from app.main import create_app
 from app.parking import get_lot
 from app.parking_api import realtime_health
 from app.parking_db import connect, init_db
-from app.realtime import RealtimeRefresher, refresh_realtime_once
+from app.realtime import RealtimeRefresher, refresh_lock, refresh_realtime_once
 from app.sources import SourceError
 from app.sync import _save_page, link_facilities
 
@@ -60,6 +60,33 @@ def test_server_creates_parent_directory_for_new_parking_database(tmp_path):
         response = client.get("/parking-lots")
         assert response.status_code == 200
         assert response.json()["items"] == []
+
+
+def test_worker_mode_disables_embedded_collector(tmp_path, monkeypatch):
+    settings = Settings(
+        database_path=str(tmp_path / "lots.db"),
+        status_service_key="test-key",
+        realtime_mode="worker",
+    )
+
+    def unexpected_start(refresher):
+        pytest.fail("Embedded collector started in worker mode")
+
+    monkeypatch.setattr(RealtimeRefresher, "start", unexpected_start)
+    with TestClient(create_app(parking_settings=settings)) as client:
+        assert client.get("/health/realtime").status_code == 200
+
+
+def test_only_one_refresher_per_database(tmp_path):
+    database = str(tmp_path / "lots.db")
+    with refresh_lock(database) as leader:
+        assert leader
+        with refresh_lock(database) as follower:
+            assert not follower
+        with refresh_lock(str(tmp_path / "other.db")) as independent:
+            assert independent
+    with refresh_lock(database) as successor:
+        assert successor
 
 
 def test_failed_refresh_keeps_previous_snapshot(tmp_path, monkeypatch):

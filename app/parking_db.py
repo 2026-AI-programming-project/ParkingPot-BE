@@ -3,6 +3,7 @@
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.config import Settings
@@ -48,7 +49,8 @@ CREATE TABLE IF NOT EXISTS realtime_status (
 );
 CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    last_seen_at TEXT
 );
 CREATE TABLE IF NOT EXISTS favorites (
     token_hash TEXT NOT NULL REFERENCES sessions(token_hash) ON DELETE CASCADE,
@@ -73,11 +75,13 @@ CREATE TABLE IF NOT EXISTS sync_progress (
 
 
 @contextmanager
-def connect(settings: Settings) -> Iterator[sqlite3.Connection]:
+def connect(settings: Settings, *, write: bool = False) -> Iterator[sqlite3.Connection]:
     connection = sqlite3.connect(settings.database_path, timeout=10)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     try:
+        if write:
+            connection.execute("BEGIN IMMEDIATE")
         yield connection
         connection.commit()
     except Exception:
@@ -91,3 +95,15 @@ def init_db(settings: Settings) -> None:
     Path(settings.database_path).parent.mkdir(parents=True, exist_ok=True)
     with connect(settings) as connection:
         connection.executescript(SCHEMA)
+    with connect(settings, write=True) as connection:
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(sessions)")}
+        if "last_seen_at" not in columns:
+            connection.execute("ALTER TABLE sessions ADD COLUMN last_seen_at TEXT")
+        # Give existing anonymous sessions a full idle window after upgrading.
+        connection.execute(
+            "UPDATE sessions SET last_seen_at = ? WHERE last_seen_at IS NULL",
+            (datetime.now(UTC).isoformat(),),
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS sessions_last_seen ON sessions(last_seen_at)"
+        )

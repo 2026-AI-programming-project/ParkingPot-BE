@@ -1,18 +1,47 @@
-"""Refresh live parking availability while the API server is running."""
+"""Refresh live parking availability in the API process or a dedicated worker."""
 
+import errno
 import logging
+import os
 import threading
+from contextlib import contextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 
 from app.config import Settings
 from app.parking import REALTIME_STATUS_MAX_AGE
-from app.parking_db import connect
+from app.parking_db import connect, init_db
 from app.sources import SourceError, fetch_page
 from app.sync import _save_page, link_facilities
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def refresh_lock(database_path: str):
+    """Let one refresher own a database on this host without holding a SQLite transaction."""
+    database = Path(database_path).resolve()
+    lock_path = database.with_name(database.name + ".realtime.lock")
+    with lock_path.open("a+b") as handle:
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno not in {errno.EACCES, errno.EAGAIN}:
+                raise
+            yield False
+        else:
+            # Closing the handle also releases the lock when the process exits.
+            yield True
 
 
 def refresh_realtime_once(settings: Settings, stop: threading.Event | None = None) -> int:
@@ -59,6 +88,14 @@ class RealtimeRefresher:
 
     def _run(self) -> None:
         while not self.stop_event.is_set():
+            with refresh_lock(self.settings.database_path) as acquired:
+                if acquired:
+                    self._refresh_until_stopped()
+                    return
+            self.stop_event.wait(self.settings.realtime_refresh_seconds)
+
+    def _refresh_until_stopped(self) -> None:
+        while not self.stop_event.is_set():
             try:
                 count = refresh_realtime_once(self.settings, self.stop_event)
                 if not self.stop_event.is_set():
@@ -83,3 +120,20 @@ class RealtimeRefresher:
             except Exception:
                 logger.exception("실시간 주차정보 갱신 중 예기치 않은 오류")
             self.stop_event.wait(self.settings.realtime_refresh_seconds)
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO)
+    settings = Settings.from_env()
+    if not settings.status_service_key or settings.realtime_refresh_seconds <= 0:
+        raise SystemExit("Set PARKING_STATUS_SERVICE_KEY and a positive refresh interval.")
+    init_db(settings)
+    logger.info("Starting ParkingPot realtime worker")
+    try:
+        RealtimeRefresher(settings)._run()
+    except KeyboardInterrupt:
+        logger.info("Stopped ParkingPot realtime worker")
+
+
+if __name__ == "__main__":
+    main()
