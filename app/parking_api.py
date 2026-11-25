@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
+from app.live_parking import search_live_facilities
 from app.parking import (
     REALTIME_STATUS_MAX_AGE,
     get_lot,
@@ -79,6 +80,15 @@ def realtime_health(request: Request) -> dict:
                WHERE s.fetched_at >= ?""",
             (cutoff,),
         ).fetchone()[0]
+        fresh_mappable = connection.execute(
+            """SELECT COUNT(*) FROM realtime_status s
+               JOIN realtime_facilities f ON f.source_id = s.source_id
+               WHERE s.fetched_at >= ?
+                 AND f.latitude BETWEEN -90 AND 90 AND f.longitude BETWEEN -180 AND 180
+                 AND f.latitude != 0 AND f.longitude != 0""",
+            (cutoff,),
+        ).fetchone()[0]
+    refresher = getattr(request.app.state, "realtime_refresher", None)
     return {
         "last_fetched_at": latest,
         "total_lots": total_lots,
@@ -86,6 +96,8 @@ def realtime_health(request: Request) -> dict:
         "source_statuses": source_statuses,
         "source_statuses_with_facility": source_statuses_with_facility,
         "fresh_linked_lots": fresh_linked,
+        "fresh_mappable_facilities": fresh_mappable,
+        "refresh_running": bool(refresher and refresher.thread.is_alive()),
         "refresh_interval_seconds": _settings(request).realtime_refresh_seconds,
     }
 
@@ -133,6 +145,33 @@ def list_parking_lots(
             page=page,
             page_size=page_size,
             sort=sort or ("distance" if lat is not None else "name"),
+        )
+
+
+@router.get("/realtime-parking-lots")
+def list_realtime_parking_lots(
+    request: Request,
+    name: str | None = Query(default=None, max_length=100),
+    lat: float | None = Query(default=None, ge=-90, le=90),
+    lon: float | None = Query(default=None, ge=-180, le=180),
+    radius_m: int = Query(default=3000, ge=100, le=20000),
+    only_unlinked: bool = False,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=100, ge=1, le=1000),
+) -> dict:
+    """Current map markers from the provider, even without a catalog match."""
+    if (lat is None) != (lon is None):
+        raise HTTPException(status_code=422, detail="lat와 lon은 함께 입력해야 합니다")
+    with connect(_settings(request)) as connection:
+        return search_live_facilities(
+            connection,
+            name=name,
+            latitude=lat,
+            longitude=lon,
+            radius_m=radius_m,
+            only_unlinked=only_unlinked,
+            page=page,
+            page_size=page_size,
         )
 
 
@@ -211,8 +250,14 @@ def add_favorite(
 ) -> dict:
     with connect(_settings(request)) as connection:
         _require_session(connection, token_hash)
-        if get_lot(connection, parking_id) is None:
+        lot = get_lot(connection, parking_id)
+        if lot is None:
             raise HTTPException(status_code=404, detail="주차장을 찾을 수 없습니다")
+        if lot["data_source"] == "realtime_facility":
+            raise HTTPException(
+                status_code=409,
+                detail="실시간 시설은 즐겨찾기를 지원하지 않습니다",
+            )
         connection.execute(
             "INSERT OR IGNORE INTO favorites(token_hash, parking_id) VALUES (?, ?)",
             (token_hash, parking_id),
@@ -242,8 +287,14 @@ def rate_parking_lot(
 ) -> dict:
     with connect(_settings(request)) as connection:
         _require_session(connection, token_hash)
-        if get_lot(connection, parking_id) is None:
+        lot = get_lot(connection, parking_id)
+        if lot is None:
             raise HTTPException(status_code=404, detail="주차장을 찾을 수 없습니다")
+        if lot["data_source"] == "realtime_facility":
+            raise HTTPException(
+                status_code=409,
+                detail="실시간 시설은 별점을 지원하지 않습니다",
+            )
         connection.execute(
             """INSERT INTO ratings(token_hash, parking_id, score) VALUES (?, ?, ?)
                ON CONFLICT(token_hash, parking_id) DO UPDATE SET score = excluded.score""",

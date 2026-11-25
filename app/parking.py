@@ -63,6 +63,7 @@ def serialize_lot(row, distance: float | None = None) -> dict:
         keywords.append("장애인 전용 주차구역")
     return {
         "id": row["id"],
+        "data_source": "catalog",
         "name": row["name"],
         "address": row["address"],
         "latitude": row["latitude"],
@@ -113,6 +114,8 @@ def search_lots(
     page_size: int,
     sort: str,
 ) -> dict:
+    from app.live_parking import search_live_facilities, serialize_live_lot
+
     filters = []
     params: list = []
     if name:
@@ -137,52 +140,66 @@ def search_lots(
         filters.extend(["p.latitude BETWEEN ? AND ?", "p.longitude BETWEEN ? AND ?"])
         params.extend([min_lat, max_lat, min_lon, max_lon])
     where = " WHERE " + " AND ".join(filters) if filters else ""
-    if nearby:
-        rows = connection.execute(SELECT_LOTS + where, params).fetchall()
-        located = [
-            (row, distance_m(latitude, longitude, row["latitude"], row["longitude"]))
-            for row in rows
-        ]
-        located = [(row, distance) for row, distance in located if distance <= radius_m]
-        if sort == "price":
-            located.sort(
-                key=lambda item: (
-                    item[0]["hourly_price"] is None,
-                    item[0]["hourly_price"] or 0,
-                    item[1],
-                )
+    entries: list[tuple[dict, float | None]] = []
+    for row in connection.execute(SELECT_LOTS + where, params):
+        distance = (
+            distance_m(latitude, longitude, row["latitude"], row["longitude"]) if nearby else None
+        )
+        if distance is None or distance <= radius_m:
+            entries.append((serialize_lot(row, distance), distance))
+
+    # The realtime provider has its own IDs. Include unmatched facilities in the
+    # normal search only when the requested filters do not require missing metadata.
+    if not address and fee is None and accessible is None:
+        live = search_live_facilities(
+            connection,
+            name=name,
+            latitude=latitude,
+            longitude=longitude,
+            radius_m=radius_m,
+            only_unlinked=True,
+            page=1,
+            page_size=None,
+            fresh_only=False,
+        )
+        for marker in live["items"]:
+            distance = (
+                distance_m(latitude, longitude, marker["latitude"], marker["longitude"])
+                if nearby
+                else None
             )
-        elif sort == "rating":
-            located.sort(
-                key=lambda item: (
-                    item[0]["rating_average"] is None,
-                    -(item[0]["rating_average"] or 0),
-                    item[1],
-                )
+            entries.append((serialize_live_lot(marker), distance))
+
+    if sort == "price":
+        entries.sort(
+            key=lambda pair: (
+                pair[0]["hourly_price"] is None,
+                pair[0]["hourly_price"] or 0,
+                pair[1] if pair[1] is not None else 0,
+                pair[0]["id"],
             )
-        elif sort == "name":
-            located.sort(key=lambda item: (item[0]["name"], item[0]["id"]))
-        else:
-            located.sort(key=lambda item: (item[1], item[0]["id"]))
-        total = len(located)
-        nearest_id = min(located, key=lambda item: item[1])[0]["id"] if located else None
-        page_rows = located[(page - 1) * page_size : page * page_size]
-        items = [serialize_lot(row, distance) for row, distance in page_rows]
+        )
+    elif sort == "rating":
+        entries.sort(
+            key=lambda pair: (
+                pair[0]["rating"]["average"] is None,
+                -(pair[0]["rating"]["average"] or 0),
+                pair[1] if pair[1] is not None else 0,
+                pair[0]["id"],
+            )
+        )
+    elif sort == "name":
+        entries.sort(key=lambda pair: (pair[0]["name"].casefold(), pair[0]["id"]))
     else:
-        total = connection.execute(
-            "SELECT COUNT(*) FROM parking_lots p" + where, params
-        ).fetchone()[0]
-        order = {
-            "name": "p.name, p.id",
-            "price": "p.hourly_price IS NULL, p.hourly_price, p.id",
-            "rating": "rating_average IS NULL, rating_average DESC, p.id",
-        }[sort]
-        rows = connection.execute(
-            SELECT_LOTS + where + " ORDER BY " + order + " LIMIT ? OFFSET ?",
-            [*params, page_size, (page - 1) * page_size],
-        ).fetchall()
-        items = [serialize_lot(row) for row in rows]
-        nearest_id = None
+        entries.sort(key=lambda pair: (pair[1], pair[0]["id"]))
+
+    total = len(entries)
+    nearest_id = (
+        min(entries, key=lambda pair: (pair[1], pair[0]["id"]))[0]["id"]
+        if nearby and entries
+        else None
+    )
+    items = [item for item, _ in entries[(page - 1) * page_size : page * page_size]]
     for item in items:
         item["is_nearest"] = item["id"] == nearest_id if nearest_id else False
     return {
@@ -195,6 +212,10 @@ def search_lots(
 
 
 def get_lot_location(connection, parking_id: str):
+    if parking_id.startswith("realtime:"):
+        from app.live_parking import get_live_lot
+
+        return get_live_lot(connection, parking_id.removeprefix("realtime:"))
     return connection.execute(
         "SELECT name, latitude, longitude FROM parking_lots WHERE id = ?", (parking_id,)
     ).fetchone()
@@ -215,5 +236,9 @@ def kakao_directions_urls(lot, origin: tuple[float, float] | None) -> tuple[str 
 
 
 def get_lot(connection, parking_id: str) -> dict | None:
+    if parking_id.startswith("realtime:"):
+        from app.live_parking import get_live_lot
+
+        return get_live_lot(connection, parking_id.removeprefix("realtime:"))
     row = connection.execute(SELECT_LOTS + " WHERE p.id = ?", (parking_id,)).fetchone()
     return serialize_lot(row) if row else None

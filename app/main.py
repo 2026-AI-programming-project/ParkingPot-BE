@@ -53,6 +53,7 @@ def create_app(
         if parking_settings.status_service_key and parking_settings.realtime_refresh_seconds > 0:
             refresher = RealtimeRefresher(parking_settings)
             refresher.start()
+        app.state.realtime_refresher = refresher
         try:
             yield
         finally:
