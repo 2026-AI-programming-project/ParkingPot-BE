@@ -100,6 +100,9 @@ def test_search_nearby_congestion_favorites_and_ratings(tmp_path):
         detail = client.get("/parking-lots/A").json()
         assert detail["hourly_price"] == 2500
         assert detail["opening_hours"]["weekday"] == {"open": "09:00", "close": "18:00"}
+        address_keyword = client.get("/parking-lots", params={"name": "세종대로"})
+        assert address_keyword.status_code == 200
+        assert {item["id"] for item in address_keyword.json()["items"]} == {"A", "B"}
         assert (
             client.get("/parking-lots", params={"address": "세종대로", "fee": "free"}).json()[
                 "total"

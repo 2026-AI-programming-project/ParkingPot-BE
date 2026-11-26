@@ -374,8 +374,10 @@
                   "type": "null"
                 }
               ],
+              "description": "주차장명 또는 주소 검색어",
               "title": "Name"
-            }
+            },
+            "description": "주차장명 또는 주소 검색어"
           },
           {
             "name": "address",
@@ -391,8 +393,10 @@
                   "type": "null"
                 }
               ],
+              "description": "주소 전용 필터",
               "title": "Address"
-            }
+            },
+            "description": "주소 전용 필터"
           },
           {
             "name": "fee",

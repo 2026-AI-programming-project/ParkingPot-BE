@@ -148,8 +148,8 @@ def create_anonymous_session(request: Request) -> dict:
 @router.get("/parking-lots", response_model=ParkingSearchResult)
 def list_parking_lots(
     request: Request,
-    name: str | None = Query(default=None, max_length=100),
-    address: str | None = Query(default=None, max_length=150),
+    name: str | None = Query(default=None, max_length=100, description="주차장명 또는 주소 검색어"),
+    address: str | None = Query(default=None, max_length=150, description="주소 전용 필터"),
     fee: str | None = Query(default=None, pattern="^(free|paid|mixed)$"),
     accessible: bool | None = None,
     lat: float | None = Query(default=None, ge=-90, le=90),

@@ -119,8 +119,9 @@ def search_lots(
     filters = []
     params: list = []
     if name:
-        filters.append("p.name LIKE ? ESCAPE '\\'")
-        params.append(_like(name.strip()))
+        keyword = _like(name.strip())
+        filters.append("(p.name LIKE ? ESCAPE '\\' OR p.address LIKE ? ESCAPE '\\')")
+        params.extend([keyword, keyword])
     if address:
         filters.append("p.address LIKE ? ESCAPE '\\'")
         params.append(_like(address.strip()))
